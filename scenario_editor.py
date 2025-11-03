@@ -121,6 +121,8 @@ class ScenarioEditorApp:
         self.selected_unit_kind: str = "air"
         self.selected_unit_slot: Optional[int] = None
 
+        self.oob_map_filename_var = tk.StringVar(value="")
+
         self._build_menu()
         self._build_notebook()
 
@@ -367,6 +369,7 @@ class ScenarioEditorApp:
             state="readonly",
             values=("air", "surface", "sub"),
         ).pack(side=tk.LEFT, padx=4)
+        ttk.Label(selector, textvariable=self.oob_map_filename_var).pack(side=tk.LEFT, padx=4)
         self.oob_kind_var.trace_add("write", lambda *_: self.refresh_unit_table())
 
         self.oob_status_var = tk.StringVar(value="Load a map to view unit tables.")
@@ -586,6 +589,7 @@ class ScenarioEditorApp:
         self.root.title(f"5th Fleet Scenario Editor — {path}")
         self.map_file = None
         self.map_file_path = None
+        self.oob_map_filename_var.set("")
         self.refresh_region_list()
         self.refresh_unit_table()
         self.refresh_scenario_list()
@@ -732,6 +736,7 @@ class ScenarioEditorApp:
             messagebox.showerror("Error", f"Failed to load map file:\n{exc}")
             return
         self.map_file_path = path
+        self.oob_map_filename_var.set(f"({path.name})")
         try:
             self.template_library = load_template_library(path.parent)
         except Exception:  # pragma: no cover
@@ -1472,6 +1477,7 @@ class ScenarioEditorApp:
     def _ensure_map_for_scenario(self, record: ScenarioRecord) -> None:
         if not record.scenario_key:
             self.oob_status_var.set("Scenario has no map key; load a map manually.")
+            self.oob_map_filename_var.set("")
             return
 
         candidates = [
@@ -1483,6 +1489,7 @@ class ScenarioEditorApp:
             self.oob_status_var.set(
                 f"Map file for '{record.scenario_key}' not found; load a map manually."
             )
+            self.oob_map_filename_var.set("")
             return
 
         if self.map_file_path and self.map_file_path.resolve() == path.resolve():
