@@ -34,6 +34,10 @@ from editor.data import (
 )
 from editor.icons import MiconIcon, load_micon_icons
 from editor.gxl import load_gxl_archive
+from editor.objectives import (
+    parse_objective_script as parse_objective_script_proper,
+    objective_script_bytes,
+)
 
 try:
     from tkinter import ttk
@@ -448,7 +452,7 @@ class ScenarioEditorApp:
 
     def _build_win_tab(self) -> None:
         frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="Win Conditions")
+        self.notebook.add(frame, text="Objectives")
 
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(2, weight=1)
@@ -1081,21 +1085,35 @@ class ScenarioEditorApp:
         self.win_index_var.set("-")
 
     def _parse_objective_script(self, trailing_bytes: bytes) -> List[Tuple[int, int]]:
-        """Parse objective script from trailing bytes into (opcode, operand) tuples."""
-        if not trailing_bytes or len(trailing_bytes) < 2:
-            return []
+        """Parse objective script from trailing bytes into (opcode, operand) tuples.
 
-        script = []
-        # Parse as little-endian words: (opcode << 8) | operand
-        for i in range(0, len(trailing_bytes) - 1, 2):
-            word = struct.unpack_from("<H", trailing_bytes, i)[0]
-            if word == 0:  # End marker
-                break
-            opcode = (word >> 8) & 0xFF  # High byte
-            operand = word & 0xFF         # Low byte
-            script.append((opcode, operand))
+        Uses the proper parser that skips metadata strings and finds the actual
+        objective script after the difficulty token.
+        """
+        return parse_objective_script_proper(trailing_bytes)
 
-        return script
+    def _encode_objective_script(self, original_trailing_bytes: bytes, script: List[Tuple[int, int]]) -> bytes:
+        """Encode objective script back to trailing bytes, preserving metadata.
+
+        The trailing bytes contain metadata strings followed by the objective script.
+        This function preserves the metadata portion and only replaces the script.
+        """
+        # Find where the script starts in the original bytes
+        script_bytes = objective_script_bytes(original_trailing_bytes)
+        if script_bytes:
+            # Calculate the offset where script starts
+            script_offset = len(original_trailing_bytes) - len(script_bytes)
+            metadata_portion = original_trailing_bytes[:script_offset]
+        else:
+            # No script found, keep all as metadata
+            metadata_portion = original_trailing_bytes
+
+        # Encode the new script
+        words = [(opcode << 8) | operand for opcode, operand in script]
+        new_script_bytes = struct.pack("<" + "H" * len(words), *words)
+
+        # Combine metadata + new script
+        return metadata_portion + new_script_bytes
 
     def _format_operand(self, operand: int) -> str:
         """Format an operand value with special value notation."""
@@ -1258,9 +1276,8 @@ class ScenarioEditorApp:
 
         script[index] = (opcode, operand)
 
-        # Encode back to trailing bytes
-        words = [(opcode << 8) | operand for opcode, operand in script]
-        record.trailing_bytes = struct.pack("<" + "H" * len(words), *words)
+        # Encode back to trailing bytes, preserving metadata
+        record.trailing_bytes = self._encode_objective_script(record.trailing_bytes, script)
 
         self.refresh_win_table()
         self.trailing_text.delete("1.0", tk.END)
@@ -1275,9 +1292,8 @@ class ScenarioEditorApp:
         script = self._parse_objective_script(record.trailing_bytes)
         script.append((0x01, 0x00))  # TURNS(0) = unlimited
 
-        # Encode back
-        words = [(opcode << 8) | operand for opcode, operand in script]
-        record.trailing_bytes = struct.pack("<" + "H" * len(words), *words)
+        # Encode back, preserving metadata
+        record.trailing_bytes = self._encode_objective_script(record.trailing_bytes, script)
 
         self.refresh_win_table()
         self.trailing_text.delete("1.0", tk.END)
@@ -1302,12 +1318,15 @@ class ScenarioEditorApp:
                 return
             del script[index]
 
-        # Encode back
+        # Encode back, preserving metadata
         if script:
-            words = [(opcode << 8) | operand for opcode, operand in script]
-            record.trailing_bytes = struct.pack("<" + "H" * len(words), *words)
+            record.trailing_bytes = self._encode_objective_script(record.trailing_bytes, script)
         else:
-            record.trailing_bytes = b""
+            # If no script left, preserve metadata but remove script portion
+            script_bytes = objective_script_bytes(record.trailing_bytes)
+            if script_bytes:
+                script_offset = len(record.trailing_bytes) - len(script_bytes)
+                record.trailing_bytes = record.trailing_bytes[:script_offset]
 
         self.refresh_win_table()
         self.trailing_text.delete("1.0", tk.END)
