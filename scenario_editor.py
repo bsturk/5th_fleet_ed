@@ -34,6 +34,10 @@ from editor.data import (
 )
 from editor.icons import MiconIcon, load_micon_icons
 from editor.gxl import load_gxl_archive
+from editor.objectives import (
+    parse_objective_script as parse_objective_script_proper,
+    objective_script_bytes,
+)
 
 try:
     from tkinter import ttk
@@ -44,10 +48,10 @@ except ImportError:  # pragma: no cover - ttk is bundled with Tk in CPython.
 # Opcode decoder ring from reverse engineering
 OPCODE_MAP = {
     0x00: ("END", "Region index", "End-of-script / victory check for region"),
-    0x01: ("TURNS", "Turn count", "Turn limit (0x0d=13, 0x0f=15, 0x00=unlimited)"),
+    0x01: ("TURNS", "?", "Turn limit marker"),
     0x03: ("SCORE", "VP ref", "Victory point objective"),
     0x04: ("CONVOY_RULE", "Flags", "Convoy delivery rule flags"),
-    0x05: ("SPECIAL_RULE", "Code", "0xfe=no cruise missiles, 0x06=convoy active"),
+    0x05: ("SPECIAL_RULE", "Code", "Special engagement rule"),
     0x06: ("SHIP_DEST", "Port idx", "Ships must reach port"),
     0x07: ("UNKNOWN_07", "?", "Unknown (used in setup)"),
     0x08: ("UNKNOWN_08", "?", "Unknown"),
@@ -60,7 +64,7 @@ OPCODE_MAP = {
     0x18: ("CONVOY_PORT", "Port idx", "Convoy destination port"),
     0x1d: ("SHIP_OBJECTIVE", "Ship type", "Ship-specific objective"),
     0x29: ("REGION_RULE", "Region idx", "Region-based victory rule"),
-    0x2d: ("ALT_TURNS", "Turn count", "Alternate turn limit"),
+    0x2d: ("ALT_TURNS", "Turn count", "Alternate turn limit (some scenarios use this)"),
     0x3a: ("CONVOY_FALLBACK", "List ref", "Fallback port list"),
     0x3c: ("DELIVERY_CHECK", "Flags", "Delivery success/failure check"),
     0x3d: ("PORT_LIST", "List idx", "Port list (multi-destination)"),
@@ -448,20 +452,14 @@ class ScenarioEditorApp:
 
     def _build_win_tab(self) -> None:
         frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="Win Conditions")
+        self.notebook.add(frame, text="Objectives")
 
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(2, weight=1)
-
-        ttk.Label(
-            frame,
-            text="Objective script from the trailing bytes of the selected scenario.\n"
-            "Format: (opcode << 8) | operand stored as little-endian 16-bit words.",
-        ).grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        frame.rowconfigure(1, weight=1)
 
         # Decoded objectives display
         decoded_frame = ttk.LabelFrame(frame, text="Decoded Objectives")
-        decoded_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 4))
+        decoded_frame.grid(row=0, column=0, sticky="ew", padx=6, pady=(0, 4))
         decoded_frame.columnconfigure(0, weight=1)
 
         self.decoded_objectives_text = tk.Text(decoded_frame, height=6, width=80, wrap=tk.WORD)
@@ -483,12 +481,12 @@ class ScenarioEditorApp:
         tree.column("operand", width=80, anchor=tk.W)
         tree.column("mnemonic", width=140, anchor=tk.W)
         tree.column("description", width=280, anchor=tk.W)
-        tree.grid(row=2, column=0, sticky="nsew", padx=6, pady=4)
+        tree.grid(row=1, column=0, sticky="nsew", padx=6, pady=4)
         tree.bind("<<TreeviewSelect>>", self._on_select_win_word)
         self.win_tree = tree
 
         editor = ttk.Frame(frame)
-        editor.grid(row=3, column=0, sticky="ew", padx=6, pady=4)
+        editor.grid(row=2, column=0, sticky="ew", padx=6, pady=4)
         editor.columnconfigure(3, weight=1)
         ttk.Label(editor, text="Selected #").grid(row=0, column=0, sticky="w")
         self.win_index_var = tk.StringVar(value="-")
@@ -1058,13 +1056,15 @@ class ScenarioEditorApp:
         # Populate tree with opcode details
         for idx, (opcode, operand) in enumerate(script):
             if opcode in OPCODE_MAP:
-                mnemonic, op_type, description = OPCODE_MAP[opcode]
+                mnemonic, op_type, _ = OPCODE_MAP[opcode]
             else:
                 mnemonic = f"UNKNOWN_{opcode:02x}"
                 op_type = "?"
-                description = "Unknown opcode"
 
             operand_display = self._format_operand(operand)
+
+            # Decode the actual description based on opcode and operand value
+            description = self._decode_opcode_description(opcode, operand)
 
             self.win_tree.insert(
                 "",
@@ -1080,22 +1080,115 @@ class ScenarioEditorApp:
             )
         self.win_index_var.set("-")
 
+    def _decode_opcode_description(self, opcode: int, operand: int) -> str:
+        """Decode a single opcode/operand pair into a human-readable description.
+
+        This decodes the actual meaning based on the operand value, not just the
+        generic opcode description.
+        """
+        if opcode == 0x01:  # TURNS
+            if operand == 0xfe or operand == 0:
+                return "No turn limit (play until objectives complete)"
+            else:
+                return f"Turn limit marker: {operand}"
+
+        elif opcode == 0x2d:  # ALT_TURNS
+            return f"Turn limit: {operand} turns"
+
+        elif opcode == 0x05:  # SPECIAL_RULE
+            if operand == 0xfe:
+                return "No cruise missile attacks allowed"
+            elif operand == 0x06:
+                return "Convoy delivery mission active"
+            elif operand == 0x00:
+                return "Standard engagement rules"
+            else:
+                return f"Special rule: code {operand}"
+
+        elif opcode == 0x0c:  # TASK_FORCE
+            if operand == 0xfe:
+                return "All task forces must survive"
+            else:
+                return f"Task force survival/destination (ref: {operand})"
+
+        elif opcode == 0x09 or opcode == 0x0a:  # ZONE_CONTROL/CHECK
+            region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+            return f"Control or occupy {region_name}"
+
+        elif opcode == 0x00:  # END
+            if operand > 0:
+                region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                return f"Victory check: {region_name}"
+            else:
+                return "End of script"
+
+        elif opcode == 0x03:  # SCORE
+            return f"Victory points objective (ref: {operand})"
+
+        elif opcode == 0x06:  # SHIP_DEST
+            return f"Ships must reach port (index: {operand})"
+
+        elif opcode == 0x0e:  # BASE_RULE
+            region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+            return f"Airfield/base objective at {region_name}"
+
+        elif opcode == 0x18:  # CONVOY_PORT
+            return f"Convoy destination (port ref: {operand})"
+
+        elif opcode == 0xbb:  # ZONE_ENTRY
+            region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+            return f"Zone entry requirement: {region_name}"
+
+        elif opcode == 0x29:  # REGION_RULE
+            region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+            return f"Region-based victory rule: {region_name}"
+
+        elif opcode == 0x3a:  # CONVOY_FALLBACK
+            return f"Convoy fallback port list (ref: {operand})"
+
+        elif opcode == 0x3c:  # DELIVERY_CHECK
+            return f"Delivery success/failure check (flags: {operand})"
+
+        elif opcode == 0x3d:  # PORT_LIST
+            return f"Multi-destination port list (ref: {operand})"
+
+        elif opcode in OPCODE_MAP:
+            _, _, description = OPCODE_MAP[opcode]
+            return f"{description} (param: {operand})"
+
+        else:
+            return f"Unknown opcode 0x{opcode:02x}, operand {operand}"
+
     def _parse_objective_script(self, trailing_bytes: bytes) -> List[Tuple[int, int]]:
-        """Parse objective script from trailing bytes into (opcode, operand) tuples."""
-        if not trailing_bytes or len(trailing_bytes) < 2:
-            return []
+        """Parse objective script from trailing bytes into (opcode, operand) tuples.
 
-        script = []
-        # Parse as little-endian words: (opcode << 8) | operand
-        for i in range(0, len(trailing_bytes) - 1, 2):
-            word = struct.unpack_from("<H", trailing_bytes, i)[0]
-            if word == 0:  # End marker
-                break
-            opcode = (word >> 8) & 0xFF  # High byte
-            operand = word & 0xFF         # Low byte
-            script.append((opcode, operand))
+        Uses the proper parser that skips metadata strings and finds the actual
+        objective script after the difficulty token.
+        """
+        return parse_objective_script_proper(trailing_bytes)
 
-        return script
+    def _encode_objective_script(self, original_trailing_bytes: bytes, script: List[Tuple[int, int]]) -> bytes:
+        """Encode objective script back to trailing bytes, preserving metadata.
+
+        The trailing bytes contain metadata strings followed by the objective script.
+        This function preserves the metadata portion and only replaces the script.
+        """
+        # Find where the script starts in the original bytes
+        script_bytes = objective_script_bytes(original_trailing_bytes)
+        if script_bytes:
+            # Calculate the offset where script starts
+            script_offset = len(original_trailing_bytes) - len(script_bytes)
+            metadata_portion = original_trailing_bytes[:script_offset]
+        else:
+            # No script found, keep all as metadata
+            metadata_portion = original_trailing_bytes
+
+        # Encode the new script
+        words = [(opcode << 8) | operand for opcode, operand in script]
+        new_script_bytes = struct.pack("<" + "H" * len(words), *words)
+
+        # Combine metadata + new script
+        return metadata_portion + new_script_bytes
 
     def _format_operand(self, operand: int) -> str:
         """Format an operand value with special value notation."""
@@ -1109,9 +1202,13 @@ class ScenarioEditorApp:
             return "No objective script found in trailing bytes."
 
         lines = []
-        lines.append(f"Scenario: {record.metadata_strings()[0] if record.metadata_entries else 'Unknown'}")
-        lines.append("=" * 70)
-        lines.append("")
+
+        # Extract turn count from byte offset 45 in trailing bytes
+        turn_count_from_byte45 = None
+        if len(record.trailing_bytes) > 45:
+            turn_count_from_byte45 = record.trailing_bytes[45]
+            lines.append(f"**Turn Limit: {turn_count_from_byte45} turns**")
+            lines.append("")
 
         # Track if we find turn-related opcodes
         found_turns_01 = False
@@ -1121,13 +1218,15 @@ class ScenarioEditorApp:
             if opcode == 0x01:  # TURNS
                 found_turns_01 = True
                 if operand == 0xfe or operand == 0:
-                    lines.append("• TURNS opcode: Until objectives complete")
+                    lines.append("• No turn limit (play until objectives complete)")
                 else:
-                    lines.append(f"• TURNS opcode: {operand} (NOTE: May not match player-visible turn limit)")
+                    lines.append(f"• Turn limit marker: {operand}")
 
             elif opcode == 0x2d:  # ALT_TURNS
                 found_alt_turns = True
-                lines.append(f"• Turn limit: {operand} turns (ALT_TURNS)")
+                lines.append(f"• Turn limit: {operand} turns")
+                if turn_count_from_byte45 and turn_count_from_byte45 != operand:
+                    lines.append(f"  ⚠ WARNING: Mismatch detected!")
 
             elif opcode == 0x05:  # SPECIAL_RULE
                 if operand == 0xfe:
@@ -1189,12 +1288,6 @@ class ScenarioEditorApp:
                 lines.append(f"• {description} (param: {operand})")
             else:
                 lines.append(f"• Unknown: opcode 0x{opcode:02x}, operand {operand}")
-
-        # Add warning if we only found TURNS(0x01) without ALT_TURNS
-        if found_turns_01 and not found_alt_turns:
-            lines.append("")
-            lines.append("⚠ WARNING: TURNS opcode (0x01) value may not reflect actual game turn limit.")
-            lines.append("  See documentation for details on turn count encoding discrepancies.")
 
         return "\n".join(lines)
 
@@ -1258,9 +1351,8 @@ class ScenarioEditorApp:
 
         script[index] = (opcode, operand)
 
-        # Encode back to trailing bytes
-        words = [(opcode << 8) | operand for opcode, operand in script]
-        record.trailing_bytes = struct.pack("<" + "H" * len(words), *words)
+        # Encode back to trailing bytes, preserving metadata
+        record.trailing_bytes = self._encode_objective_script(record.trailing_bytes, script)
 
         self.refresh_win_table()
         self.trailing_text.delete("1.0", tk.END)
@@ -1275,9 +1367,8 @@ class ScenarioEditorApp:
         script = self._parse_objective_script(record.trailing_bytes)
         script.append((0x01, 0x00))  # TURNS(0) = unlimited
 
-        # Encode back
-        words = [(opcode << 8) | operand for opcode, operand in script]
-        record.trailing_bytes = struct.pack("<" + "H" * len(words), *words)
+        # Encode back, preserving metadata
+        record.trailing_bytes = self._encode_objective_script(record.trailing_bytes, script)
 
         self.refresh_win_table()
         self.trailing_text.delete("1.0", tk.END)
@@ -1302,12 +1393,15 @@ class ScenarioEditorApp:
                 return
             del script[index]
 
-        # Encode back
+        # Encode back, preserving metadata
         if script:
-            words = [(opcode << 8) | operand for opcode, operand in script]
-            record.trailing_bytes = struct.pack("<" + "H" * len(words), *words)
+            record.trailing_bytes = self._encode_objective_script(record.trailing_bytes, script)
         else:
-            record.trailing_bytes = b""
+            # If no script left, preserve metadata but remove script portion
+            script_bytes = objective_script_bytes(record.trailing_bytes)
+            if script_bytes:
+                script_offset = len(record.trailing_bytes) - len(script_bytes)
+                record.trailing_bytes = record.trailing_bytes[:script_offset]
 
         self.refresh_win_table()
         self.trailing_text.delete("1.0", tk.END)
