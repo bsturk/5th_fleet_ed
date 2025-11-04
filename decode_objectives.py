@@ -10,38 +10,11 @@ import sys
 from pathlib import Path
 from collections import defaultdict
 
-# Opcode mnemonics discovered from Fleet.exe at offset 0x5c22b
-# Format: opcode_number -> (mnemonic, arity, description)
-OPCODE_MAP = {
-    # These are initial guesses based on patterns and notes
-    0x00: ("END", 1, "End of script or end condition check"),
-    0x01: ("TURNS", 1, "Set turn limit"),
-    0x03: ("SCORE", 1, "Set victory point requirement"),
-    0x04: ("CONVOY_RULE", 1, "Convoy delivery rule"),
-    0x05: ("SPECIAL_RULE", 1, "Special scenario rule"),
-    0x06: ("SHIP_DEST", 1, "Ship must reach destination"),
-    0x09: ("ZONE_CONTROL", 1, "Zone control objective"),
-    0x0a: ("ZONE_CHECK", 1, "Check zone occupation"),
-    0x0c: ("TASK_FORCE", 1, "Task force objective"),
-    0x0e: ("BASE_RULE", 1, "Base/airfield objective"),
-    0x13: ("PORT_RESTRICT", 1, "Port restriction"),
-    0x18: ("CONVOY_PORT", 1, "Convoy destination port"),
-    0x1d: ("SHIP_OBJECTIVE", 1, "Ship-specific objective"),
-    0x29: ("REGION_RULE", 1, "Region-based rule"),
-    0x2d: ("ALT_TURNS", 1, "Alternate turn limit encoding"),
-    0x3a: ("CONVOY_FALLBACK", 1, "Convoy fallback port"),
-    0x3c: ("DELIVERY_CHECK", 1, "Delivery success check"),
-    0x3d: ("PORT_LIST", 1, "Port list reference"),
-    0x41: ("FLEET_POSITION", 1, "Fleet positioning requirement"),
-    0x6d: ("SUPPLY_LIMIT", 1, "Supply/replenishment restriction"),
-    0xbb: ("ZONE_ENTRY", 1, "Zone entry requirement"),
-}
-
-# Special operand values
-SPECIAL_OPERANDS = {
-    0xfe: "PROHIBITED",  # e.g., no cruise missiles
-    0xff: "UNLIMITED",
-}
+from editor.objectives import (
+    OPCODE_MAP,
+    SPECIAL_OPERANDS,
+    parse_objective_script as shared_parse_objective_script,
+)
 
 
 def parse_scenario_script(block_data):
@@ -51,41 +24,7 @@ def parse_scenario_script(block_data):
     The script is stored at the end of the block after the difficulty string.
     Format: sequence of little-endian words where high byte = opcode, low byte = operand.
     """
-    # Find the difficulty marker ("Low", "Medium", "High")
-    difficulty_patterns = [b'Low\x00', b'Medium\x00', b'High\x00']
-    script_start = -1
-
-    for pattern in difficulty_patterns:
-        idx = block_data.rfind(pattern)
-        if idx != -1:
-            script_start = idx + len(pattern)
-            break
-
-    if script_start == -1:
-        # No difficulty found, look for last string before binary data
-        # Search backwards for a run of nulls followed by text
-        for i in range(len(block_data) - 50, max(len(block_data) - 200, 0), -1):
-            if block_data[i] == 0 and block_data[i+1] != 0:
-                script_start = i + 1
-                break
-
-    if script_start == -1 or script_start >= len(block_data) - 4:
-        return []
-
-    # Parse the script as little-endian words
-    script_data = block_data[script_start:]
-    opcodes = []
-
-    for i in range(0, min(len(script_data) - 1, 32), 2):  # Max ~16 opcodes
-        word = struct.unpack_from("<H", script_data, i)[0]
-        if word == 0:  # End marker
-            break
-
-        opcode = (word >> 8) & 0xFF  # High byte
-        operand = word & 0xFF         # Low byte
-        opcodes.append((opcode, operand))
-
-    return opcodes
+    return shared_parse_objective_script(block_data)
 
 
 def decode_opcode(opcode, operand, context=None):
