@@ -1,169 +1,10 @@
-# 5th Fleet Reverse-Engineering Notes
+# 5th Fleet Data Reference
 
-## General Info
+## About This Document
+- Empirical findings about `5th Fleet` scenario data, victory logic, and supporting assets derived from reverse engineering.
+- For tooling, workflows, and search recipes, see `5th_fleet_reversing_tips.md`.
 
-### Project Overview
-- Reverse-engineering the DOS-era `Fleet.exe` and its data files to understand scenario structure, objectives, and asset formats.
-- `Fleet.exe` is a Borland/Turbo Pascal 16-bit DOS program that relies on the EGAVGA 2.00 BGI driver for graphics.
-- Game data lives in `game/` (scenario `.DAT` files, resource containers) with supporting research artifacts in `notes_reversing.txt`, `disasm.txt`, `tools/`, and Python helpers.
-- Documentation here captures findings, workflows, and resource-specific notes so tweaks stay reproducible.
-
-### Tooling Summary
-- `disasm.txt` (IDA text export) is the authoritative code reference—see the dedicated section for navigation tips.
-- Python helpers (`tools/dump_5th_fleet.py`, `tools/decode_objectives.py`, `tools/analyze_opcodes.py`, `scenario_editor.py`) parse and patch scenario data; each script has a section below with usage notes.
-- Auxiliary references: PCX/GXL asset dumps, and handwritten notes in `notes_reversing.txt`.
-
-### Workflow Tips
-- Start with the relevant resource section, then jump into `disasm.txt` or the associated script to trace deeper details.
-- Keep terminal one-liners handy for grepping disassembly (examples included per resource) and for running Python helpers against specific scenario files.
-- When experimenting, copy binaries first - the executables and `.DAT` files have no built-in checksums, but sizes and pointer tables must be preserved.
-
-### Editing Considerations
-- Scenario modifications:
-  - Text changes: edit `SCENARIO.DAT` blocks (preserve block length).
-  - Region edits: modify `name`, adjacency codes, numeric tail entries in the 65-byte records.
-  - Base/unit additions: pointers 5/8/11 contain 32-byte frames referencing the air/surface/submarine template libraries; edit those frames to adjust the OOB.
-  - Map highlight adjustments: the derived `map_position` (panel/x/y/width) comes from the per-region tail bytes; tweak these to move the highlight rectangle between map panels (`panel` toggles between the two scrolling boards). To change the actual PCX location, add the panel base offset described above.
-- All numeric fields are little-endian. Keep counts in the pointer table in sync with actual data sizes.
-- No known checksums; the game accepts edited data if sizes/offsets remain consistent.
-
-### External Map/Graphics Editing
-- Strategical, operational, and tactical maps are external assets, not bundled in the executable:
-  - `MAPVER20.PCX` holds the full-resolution political board (2861×2126); `SMALLMP.PCX` is the 89×66 overview used for mini-map and briefing screens.
-  - `*.GXL` files (Genus Microprogramming format) hold additional screens, sprites, UI elements; they embed PCX data internally.
-- These assets can be edited or replaced with standard graphics tools (convert/unpack PCX/GXL as needed) independent of the scenario `.DAT` files.
-
-## Resource Guides
-
-### `disasm.txt` (IDA Export)
-- **`disasm.txt`**: IDA Pro disassembly of `Fleet.exe` (386k lines) - **RECOMMENDED for reverse engineering**
-  - Superior cross-references (DATA XREF, CODE XREF annotations)
-  - Better function detection and naming
-  - Example: `"scenario.dat" ; DATA XREF: sub_8E20F+18o` shows exactly which function references the string
-
-#### Why IDA Pro is Preferred
-IDA's text export preserves cross-references inline, so it is obvious which functions touch a string or data structure:
-```asm
-dseg:4B90 aScenario_dat    db 'scenario.dat',0     ; DATA XREF: sub_8E20F+18o
-                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^
-                                                     Used by sub_8E20F at offset +18
-```
-
-#### Reading IDA Annotations
-`DATA XREF` entries list every function that reads or writes a datum, while `CODE XREF` entries show which callers reach a procedure. A typical procedure header looks like:
-```asm
-ovr148:0000 sub_7D820      proc far                 ; CODE XREF: sub_4F5C5J
-```
-The segment (`ovr148`) and offset (`0000`) form the 16-bit address, and the trailing comment lists known callers.
-
-#### Navigating the Disassembly
-Find a function definition by searching for its `proc` declaration:
-```bash
-grep "^sub_8E20F.*proc" disasm-ida.txt
-```
-Trace usage by following the call chain. For example, locating the code that loads `scenario.dat`:
-```bash
-grep '"scenario.dat"' disasm-ida.txt
-grep "^.*sub_8E20F.*proc" disasm-ida.txt
-sed -n '301259,301720p' disasm-ida.txt
-```
-Use `sed` line ranges to read the entire routine and note `call` instructions to hop to deeper helpers.
-
-#### Hunting Constants and Access Patterns
-Leverage `grep` to pinpoint structure math and file I/O:
-```bash
-grep "imul.*41h" disasm-ida.txt            # 65-byte region record multiplier
-grep "\\[bx+36h\\]" disasm-ida.txt         # Accesses offset 0x36 in a region record
-grep "int.*21h" disasm-ida.txt             # DOS file operations
-grep "mov.*ah.*3fh" disasm-ida.txt         # AH=3Fh (read file)
-grep "mov.*ah.*3dh" disasm-ida.txt         # AH=3Dh (open file)
-```
-For generic pattern hunts, use pipelines:
-```bash
-grep "41h" disasm-ida.txt | grep -E "imul|push|mov"
-grep "proc far" disasm-ida.txt | cut -d' ' -f2        # Quick function inventory
-```
-
-#### Quick Search Recipes
-Strings, callers, and structure touches can be surfaced quickly:
-```bash
-grep "Unable to open" disasm-ida.txt                    # Locate specific error text
-grep "Unable to open.*XREF" disasm-ida.txt              # Show XREF comments for that string
-grep "call.*sub_7D820" disasm-ida.txt | head -10        # Who invokes the bulk loader
-grep "\\[.*+32h\\]" disasm-ida.txt                      # Accesses offset 0x32 (50 decimal)
-grep "es:\\[bx+0x" disasm-ida.txt                       # All ES-segment memory touches
-grep "imul" disasm-ida.txt                              # Multiplication patterns
-```
-To trace callers iteratively:
-```bash
-grep "call.*sub_7D820" disasm-ida.txt | head -10
-grep "CODE XREF.*sub_8CA14" disasm-ida.txt
-grep "^.*sub_8CA14.*proc" disasm-ida.txt
-```
-
-#### Addressing and Line Numbers
-IDA uses `segment:offset` addresses (`ovr161:01AF`), where the segment name identifies an overlay (`ovrNNN`), code segment (`seg004`), or data segment (`dseg`). Absolute addresses depend on runtime loading, so rely on the segment label plus offset when cross-referencing.
-
-Keep useful `sed` ranges handy for large routines:
-```bash
-sed -n '301259,301720p' disasm-ida.txt  # sub_8E20F
-sed -n '268162,268400p' disasm-ida.txt  # sub_7D820
-sed -n '45500,45600p' disasm-ida.txt    # Region access code
-```
-Count matches or capture line numbers when triaging large sets:
-```bash
-grep -c "imul.*41h" disasm-ida.txt
-grep -n "sub_7D820.*proc" disasm-ida.txt
-```
-
-#### Worked Example: Region Parsing
-One path to the region loader:
-```bash
-grep "imul.*41h" disasm-ida.txt | head -1
-sed -n '45530,45550p' disasm-ida.txt
-grep -B50 "seg004:2B6D" disasm-ida.txt | grep "proc far"
-grep "call.*sub_XXXXX" disasm-ida.txt
-```
-Breaking it down:
-1. Identify the multiplication by 0x41 (65) that scales region indices.
-2. Read the surrounding lines to confirm context.
-3. Walk backward to the owning procedure.
-4. Chase `call` sites to see which code drives the loader.
-
-#### Known Function Highlights
-- `sub_8E20F` (`ovr161:01AF`): loads `scenario.dat` (records are 89 bytes).
-- `sub_8CA14` (`ovr160:2023`): loads map files and iterates 65-byte region records.
-- `sub_7D820` (`ovr148:0000`): generic bulk data reader.
-- `sub_2375`: low-level DOS `INT 21h` read wrapper.
-- `sub_4F5C5`: thunk that jumps into `sub_7D820`.
-
-#### Further Investigation Targets
-Promising follow-up areas include adjacency handling (look for two-letter region codes), map display routines (fields around header offset 0x30), unit table parsing (0x20-sized records), the 16-entry pointer section handler, and the objective interpreter (likely a jump table of opcode handlers).
-
-### `dump_5th_fleet.py`
-- Parses `SCENARIO.DAT` and companion scenario `.DAT` files to surface text, region records, pointer sections, and order-of-battle summaries.
-- Usage:
-  ```bash
-  python dump_5th_fleet.py --scenario game/SCENARIO.DAT --map game/MALDIVE.DAT
-  ```
-  Add `--json` for machine-readable output.
-
-### `decode_objectives.py`
-- Converts the objective scripts stored inside `SCENARIO.DAT` into human-readable victory conditions using the opcode mapping table.
-- Usage:
-  ```bash
-  python decode_objectives.py
-  ```
-
-### `analyze_opcodes.py`
-- Performs statistical analysis of opcode usage across all scenarios and searches `Fleet.exe` for interpreter vocabulary patterns to prioritize decompilation targets.
-
-### `scenario_editor.py`
-- Tkinter GUI for editing scenarios, maps, regions, and order of battle by manipulating the parsed data structures from the Python helpers.
-- Usage:
-  ```bash
-  python scenario_editor.py
-  ```
+## Scenario & Map Payloads
 
 ### Data File: `SCENARIO.DAT`
 
@@ -199,6 +40,8 @@ General layout:
    - Raw strings (base names, filenames).
    - Unit tables (see below).
    - Mixed binary data (scripts, reinforcement schedules, etc.).
+
+## Victory Logic
 
 ### Data File: Scenario Tail / Win Logic
 
@@ -415,6 +258,8 @@ Despite extensive disassembly analysis, the actual player-visible turn limits (5
 - Examine memory dumps during actual game execution to see where turn limits are stored
 - Check if there are overlay files or data segments not yet analyzed
 
+## Additional Scenario Structures
+
 ### Data File: Order of Battle (OOB)
 
 - Pointer entries 5, 8, and 11 hold the air, surface, and submarine OOB respectively. Each block is a sequence of 32-byte frames (16 little-endian words).
@@ -456,6 +301,8 @@ Despite extensive disassembly analysis, the actual player-visible turn limits (5
     - Further investigation needed to decode BTMP format and identify specific ship/aircraft silhouettes
 
 ### Pointer Sections Relevant to Victory Logic
+
+## Derived Outputs
 
 - **Pointer section 0**: (type, id) pairs indexing zones/bases/objectives. Format: `(type_byte, id_byte)` as little-endian words. Example: `(0x02,0x05)`, `(0x09,0x02)`. These are referenced by opcodes like `0x0c` (TASK_FORCE) when operand != `0xfe`.
 - **Pointer section 1**: (type, value) lookup table for units, special rules, and scenario-specific data. Similar format to section 0 but used for different categories of game objects.
@@ -550,6 +397,8 @@ Sample structure returned by the `--json` flag; field names map directly to scen
 }
 ```
 
+## Graphics Assets
+
 ### Graphics Assets: Strategic Board PCX
 
 - The scrolling strategic board displayed in the UI is `STRATMAP.PCX`, a 640×480, 16-colour image embedded inside `MAINLIB.GXL`. Each resource entry in `MAINLIB.GXL` stores a name followed by two 32-bit little-endian integers (`offset`, `length`). `STRATMAP.PCX` lives at offset 0x0004B851 (309 329) with length 100 197 bytes.
@@ -568,10 +417,10 @@ Sample structure returned by the `--json` flag; field names map directly to scen
   - The operational (hex) map is drawn from `TACTICAL.PCX` (offset 174 850, length 21 711 bytes) and related assets such as `DPBRIDGE.PCX` for UI chrome; these files also sit in `MAINLIB.GXL` and weave together the scrolling hex view, though the pointer-table that feeds the hex map still needs to be identified.
   - Tactical engagements use the “combat window” assets (`COMBTWIN.PCX`, plus winning-variation screens like `WINNONE .PCX`, `WINGREEN.PCX`, `WINRED  .PCX`). These PCXs control the 1‑on‑1 battle board rather than the strategic/operational overlays.
 
-### Region Record Parsing (Disassembly)
+## Region Record Parsing (Disassembly)
 Insights from the `disasm.txt` export that explain how map-region records are loaded and interpreted at runtime.
 
-#### Confirmed from IDA/Ghidra Disassembly:
+### Confirmed from IDA/Ghidra Disassembly:
 
 1. **Region Record Size**: 65 bytes (0x41) confirmed by `IMUL AX,0x41` at multiple locations
    - IDA: `seg004:2B6D`, `ovr146:0692`, `ovr190:027D`, and 60+ other locations
