@@ -1202,15 +1202,12 @@ class ScenarioEditorApp:
             return "No objective script found in trailing bytes."
 
         lines = []
-        lines.append(f"Scenario: {record.metadata_strings()[0] if record.metadata_entries else 'Unknown'}")
-        lines.append("=" * 70)
-        lines.append("")
 
-        # Extract turn count from byte offset 45 in trailing bytes (discovered 2025-01-04!)
+        # Extract turn count from byte offset 45 in trailing bytes
         turn_count_from_byte45 = None
         if len(record.trailing_bytes) > 45:
             turn_count_from_byte45 = record.trailing_bytes[45]
-            lines.append(f"**Turn Limit: {turn_count_from_byte45} turns** (from trailing_bytes[45])")
+            lines.append(f"**Turn Limit: {turn_count_from_byte45} turns**")
             lines.append("")
 
         # Track if we find turn-related opcodes
@@ -1221,15 +1218,15 @@ class ScenarioEditorApp:
             if opcode == 0x01:  # TURNS
                 found_turns_01 = True
                 if operand == 0xfe or operand == 0:
-                    lines.append("• TURNS opcode: Until objectives complete")
+                    lines.append("• TURNS opcode: Specifies until objectives are complete")
                 else:
-                    lines.append(f"• TURNS opcode: {operand} (see actual limit above)")
+                    lines.append(f"• TURNS opcode: Specifies {operand} turns as the time limit")
 
             elif opcode == 0x2d:  # ALT_TURNS
                 found_alt_turns = True
-                lines.append(f"• Turn limit: {operand} turns (from ALT_TURNS opcode)")
+                lines.append(f"• Turn limit: {operand} turns")
                 if turn_count_from_byte45 and turn_count_from_byte45 != operand:
-                    lines.append(f"  ⚠ WARNING: Mismatch with trailing_bytes[45] = {turn_count_from_byte45}!")
+                    lines.append(f"  ⚠ WARNING: Mismatch detected!")
 
             elif opcode == 0x05:  # SPECIAL_RULE
                 if operand == 0xfe:
@@ -1291,16 +1288,6 @@ class ScenarioEditorApp:
                 lines.append(f"• {description} (param: {operand})")
             else:
                 lines.append(f"• Unknown: opcode 0x{opcode:02x}, operand {operand}")
-
-        # Add informational note about turn counts
-        if not found_alt_turns and not turn_count_from_byte45:
-            lines.append("")
-            lines.append("ℹ NOTE: Turn count not found. It may be stored at byte offset 45 in trailing_bytes")
-            lines.append("  (for scenarios with 56-byte trailing sections) or in the ALT_TURNS (0x2d) opcode.")
-        elif turn_count_from_byte45 and not found_alt_turns:
-            lines.append("")
-            lines.append("ℹ Turn count extracted from byte offset 45 in trailing_bytes. This is the")
-            lines.append("  standard storage location for scenarios. Edit this byte to change turn limit.")
 
         return "\n".join(lines)
 
