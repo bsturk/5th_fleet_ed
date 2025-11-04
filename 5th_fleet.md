@@ -245,24 +245,94 @@ Pattern:          0x0f 0xa7 <scenario_key> 0x00 [?] 0x0f 0x80 0x01 0x8f <difficu
   - `0x80 0x01`: As little-endian word = **0x0180** (384 decimal) - referenced in code at 1000:2034
   - `0x8f`: Unknown flag/marker
 
-**Turn Count Storage - SOLVED! (2025-01-04)**
+**Turn Count Storage Location - DISCOVERED (2025-01-04)**
 
-✅ **MYSTERY SOLVED:** Turn counts are stored at **byte offset 45** in `trailing_bytes`!
+After extensive disassembly tracing and data file analysis, the turn count storage has been located:
 
-See the "Turn Count Storage - DISCOVERED!" section above for full details.
+**Primary Storage: `trailing_bytes[45]` (byte offset 45)**
 
-**What We Learned:**
-1. Turn counts for standard scenarios (56-byte trailing_bytes): stored at offset 45
-2. Scenarios with shorter trailing_bytes: use ALT_TURNS (0x2d) opcode instead
-3. The TURNS (0x01) opcode operand does NOT store the actual turn limit
-4. Turn counts are fully editable by modifying trailing_bytes[45] or the ALT_TURNS opcode
-5. The game loads this value into memory at offset 0x7E during scenario initialization
+For standard scenarios with 56-byte trailing_bytes sections, the turn count is stored as a single byte at offset 45.
+
+**Structure of trailing_bytes (56 bytes total):**
+```
+Offset  Content
+------  -------
+0-1     0x0f 0x99           Unknown header
+2-3     0x0c 0xfe           Unknown flags
+4-20    "5th Fleet\x00"     Game name string
+21-23   0xc4 0x31 0x04      Unknown data
+24-25   0x00 0x02           Unknown flags
+26-29   0x5c 0xbc 0x0f 0xbc Unknown data
+30-31   0x0f 0xa7           Unknown data
+32-40   "<scenario_key>"    E.g., "Maldive\x00", "Raiders\x00"
+41      0xb0 or 0x00        Unknown flag
+42-45   0x0f 0x80 0x01 0x8f Fixed pattern
+45      **TURN COUNT**      ← Actual turn limit stored here!
+46-55   Objective script    Starts with difficulty ("Low\x00", etc.) then opcodes
+```
+
+**Example: The Battle of the Maldives (5 turns)**
+```
+Hex: 0f990cfe35746820466c65657400c4310400025cbc0fbc0fa74d616c6469766500b00f80018f4c6f77000d01fe0506050001050e18030600
+          │                                                        │           │  └─ Objectives script
+          │                                                        │           └─ Turn count = 0x05 (5)
+          │                                                        └─ Scenario key "Maldive"
+          └─ Metadata prefix
+```
+
+**Fallback Storage: ALT_TURNS (0x2d) opcode**
+
+Scenarios with shorter trailing_bytes (or those using the campaign system) store turn counts in the objectives script using opcode 0x2d (ALT_TURNS).
+
+**How the Game Uses It:**
+
+1. During scenario loading (in `sub_612DB` at ovr137:0755-0769), the game reads:
+   ```asm
+   mov ax, seg dseg
+   mov es, ax
+   les bx, es:dword_5E648       ; Load scenario data pointer
+   les bx, es:[bx+48Bh]         ; Get metadata structure at offset 0x48B
+   mov dx, es:[bx+3]            ; Read high word
+   mov ax, es:[bx+1]            ; Read low word (THIS is trailing_bytes[45]!)
+   les bx, [bp+arg_0]
+   mov es:[bx+36h], dx          ; Store high word at offset 0x36
+   mov es:[bx+34h], ax          ; Store turn count at offset 0x34
+   ```
+
+2. Later (in `sub_8BDD8` at ovr160:12EC-1305), this value is copied to the turn counter:
+   ```asm
+   mov ax, seg dseg
+   mov es, ax
+   les bx, es:dword_5E644
+   mov ax, es:[bx+52h]          ; Get turn count from game state (+52h)
+   dec ax                       ; Decrement by 1
+   mov al, [bp+var_1]
+   cbw
+   add ax, ax                   ; Multiply by 2 for word offset
+   mov dx, seg dseg
+   mov es, dx
+   les bx, es:dword_5E644
+   add bx, ax
+   mov es:[bx+7Eh], ax          ; Store at offset 0x7E (active turn counter)
+   ```
+
+3. The pointer at `dword_5E648 + 48Bh` points to the scenario metadata structure, and offset `+1` within that structure corresponds to `trailing_bytes[45]`.
+
+**Discovery Method:**
+
+1. Traced disassembly backwards from turn counter at memory offset 0x7E
+2. Found initialization at `dword_5E648 + 48Bh + 1` (points to scenario metadata)
+3. Systematically examined all scenario trailing_bytes for the expected values (5, 12, 10, 12, 9...)
+4. Found consistent match at byte offset 45 for first 5 scenarios
+5. Verified against game behavior and ALT_TURNS opcode for validation
 
 **Why It Was Hard to Find:**
+
 - The value is NOT in the objectives script portion - it's in the metadata section before the script
-- Many scenarios have the same metadata prefix, making pattern recognition difficult
-- The 56-byte trailing_bytes structure has no obvious field boundaries
-- Required systematic analysis of all scenarios AND disassembly tracing to discover
+- Many scenarios share identical metadata prefixes (bytes 0-44), making pattern recognition difficult
+- The 56-byte trailing_bytes structure has no obvious field boundaries or markers
+- TURNS opcode (0x01) was a red herring - its operand is ignored
+- Required both disassembly tracing AND systematic data file analysis to discover
 
 ## Additional Scenario Structures
 
