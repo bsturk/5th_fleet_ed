@@ -51,7 +51,7 @@ OPCODE_MAP = {
     0x01: ("TURNS", "?", "TURNS opcode (actual limit at trailing_bytes[45] or 0x2d)"),
     0x03: ("SCORE", "VP ref", "Victory point objective"),
     0x04: ("CONVOY_RULE", "Flags", "Convoy delivery rule flags"),
-    0x05: ("SPECIAL_RULE", "Code", "0xfe=no cruise missiles, 0x06=convoy active"),
+    0x05: ("SPECIAL_RULE", "Code", "Special engagement rule"),
     0x06: ("SHIP_DEST", "Port idx", "Ships must reach port"),
     0x07: ("UNKNOWN_07", "?", "Unknown (used in setup)"),
     0x08: ("UNKNOWN_08", "?", "Unknown"),
