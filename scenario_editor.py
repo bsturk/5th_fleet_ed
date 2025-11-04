@@ -1062,13 +1062,15 @@ class ScenarioEditorApp:
         # Populate tree with opcode details
         for idx, (opcode, operand) in enumerate(script):
             if opcode in OPCODE_MAP:
-                mnemonic, op_type, description = OPCODE_MAP[opcode]
+                mnemonic, op_type, _ = OPCODE_MAP[opcode]
             else:
                 mnemonic = f"UNKNOWN_{opcode:02x}"
                 op_type = "?"
-                description = "Unknown opcode"
 
             operand_display = self._format_operand(operand)
+
+            # Decode the actual description based on opcode and operand value
+            description = self._decode_opcode_description(opcode, operand)
 
             self.win_tree.insert(
                 "",
@@ -1083,6 +1085,79 @@ class ScenarioEditorApp:
                 ),
             )
         self.win_index_var.set("-")
+
+    def _decode_opcode_description(self, opcode: int, operand: int) -> str:
+        """Decode a single opcode/operand pair into a human-readable description.
+
+        This decodes the actual meaning based on the operand value, not just the
+        generic opcode description.
+        """
+        if opcode == 0x2d:  # ALT_TURNS
+            return f"Turn limit: {operand} turns"
+
+        elif opcode == 0x05:  # SPECIAL_RULE
+            if operand == 0xfe:
+                return "No cruise missile attacks allowed"
+            elif operand == 0x06:
+                return "Convoy delivery mission active"
+            elif operand == 0x00:
+                return "Standard engagement rules"
+            else:
+                return f"Special rule: code {operand}"
+
+        elif opcode == 0x0c:  # TASK_FORCE
+            if operand == 0xfe:
+                return "All task forces must survive"
+            else:
+                return f"Task force survival/destination (ref: {operand})"
+
+        elif opcode == 0x09 or opcode == 0x0a:  # ZONE_CONTROL/CHECK
+            region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+            return f"Control or occupy {region_name}"
+
+        elif opcode == 0x00:  # END
+            if operand > 0:
+                region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                return f"Victory check: {region_name}"
+            else:
+                return "End of script"
+
+        elif opcode == 0x03:  # SCORE
+            return f"Victory points objective (ref: {operand})"
+
+        elif opcode == 0x06:  # SHIP_DEST
+            return f"Ships must reach port (index: {operand})"
+
+        elif opcode == 0x0e:  # BASE_RULE
+            region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+            return f"Airfield/base objective at {region_name}"
+
+        elif opcode == 0x18:  # CONVOY_PORT
+            return f"Convoy destination (port ref: {operand})"
+
+        elif opcode == 0xbb:  # ZONE_ENTRY
+            region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+            return f"Zone entry requirement: {region_name}"
+
+        elif opcode == 0x29:  # REGION_RULE
+            region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+            return f"Region-based victory rule: {region_name}"
+
+        elif opcode == 0x3a:  # CONVOY_FALLBACK
+            return f"Convoy fallback port list (ref: {operand})"
+
+        elif opcode == 0x3c:  # DELIVERY_CHECK
+            return f"Delivery success/failure check (flags: {operand})"
+
+        elif opcode == 0x3d:  # PORT_LIST
+            return f"Multi-destination port list (ref: {operand})"
+
+        elif opcode in OPCODE_MAP:
+            _, _, description = OPCODE_MAP[opcode]
+            return f"{description} (param: {operand})"
+
+        else:
+            return f"Unknown opcode 0x{opcode:02x}, operand {operand}"
 
     def _parse_objective_script(self, trailing_bytes: bytes) -> List[Tuple[int, int]]:
         """Parse objective script from trailing bytes into (opcode, operand) tuples.
