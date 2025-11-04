@@ -295,6 +295,7 @@ class MapRegion:
     name: str
     fields: List[RegionField]
     tail_words: List[int]
+    tail_data_start: int = 33  # Byte offset where tail_words actually start (33 if no overflow)
     adjacency_field_index: Optional[int] = None
     region_code_field_index: Optional[int] = None
 
@@ -342,22 +343,70 @@ class MapRegion:
         self.fields[idx].set_text(merged)
 
     def to_bytes(self) -> bytes:
+        """
+        Reconstruct the 65-byte region record.
+
+        Layout:
+        - Bytes 0-32: Header (name + fields, may have partial field at end)
+        - Bytes 33-64: Tail (may start with field continuation, then tail_words)
+        """
+        header_limit = REGION_RECORD_LEN - 32  # 33 bytes
+
+        # Build header and collect any overflow
         header = bytearray()
         header.extend(self.name.encode(SCENARIO_TEXT_ENCODING, errors="replace"))
         header.append(0)
+
+        tail_overflow = bytearray()  # Field bytes that overflow into tail
+
         for field in self.fields:
-            header.extend(field.raw)
+            field_start = len(header)
+            field_data = bytearray(field.raw)
             if field.has_trailing_null:
-                header.append(0)
-        if len(header) > REGION_RECORD_LEN - 32:
-            raise ValueError(
-                f"Region header overflow for {self.name}: {len(header)} bytes (limit {REGION_RECORD_LEN - 32})"
-            )
-        while len(header) < REGION_RECORD_LEN - 32:
+                field_data.append(0)
+
+            # Check if this field will overflow the header
+            if field_start + len(field_data) > header_limit:
+                # Split field: put what fits in header, rest in tail overflow
+                header_space = header_limit - field_start
+                if header_space > 0:
+                    header.extend(field_data[:header_space])
+                    tail_overflow.extend(field_data[header_space:])
+                else:
+                    # No space in header, entire field goes to tail overflow
+                    tail_overflow.extend(field_data)
+                break  # No more fields can fit
+            else:
+                header.extend(field_data)
+
+        # Pad header to exactly 33 bytes
+        while len(header) < header_limit:
             header.append(0)
-        tail = struct.pack("<" + "H" * len(self.tail_words), *self.tail_words)
-        tail += b"\x00" * (32 - len(tail))
-        return bytes(header + tail[:32])
+
+        # Build tail section
+        tail = bytearray()
+
+        # Add field overflow first (if any)
+        tail.extend(tail_overflow)
+
+        # Calculate where tail_words should start
+        # tail_data_start is absolute offset (33+), so tail offset is relative
+        tail_words_offset = self.tail_data_start - header_limit
+
+        # Add padding between field overflow and tail_words if needed
+        while len(tail) < tail_words_offset:
+            tail.append(0)
+
+        # Add tail_words
+        tail_words_bytes = struct.pack("<" + "H" * len(self.tail_words), *self.tail_words)
+        tail.extend(tail_words_bytes)
+
+        # Pad or truncate tail to exactly 32 bytes
+        while len(tail) < 32:
+            tail.append(0)
+        tail = tail[:32]
+
+        return bytes(header + tail)
 
     def clone(self) -> "MapRegion":
         return MapRegion(
@@ -368,6 +417,7 @@ class MapRegion:
                 for field in self.fields
             ],
             tail_words=list(self.tail_words),
+            tail_data_start=self.tail_data_start,
             adjacency_field_index=self.adjacency_field_index,
             region_code_field_index=self.region_code_field_index,
         )
@@ -433,10 +483,13 @@ class UnitTable:
     max_slots: int
 
     def rebuild_chunk(self) -> bytes:
+        # Build a mapping of slot -> unit
+        unit_by_slot = {unit.slot: unit for unit in self.units}
+
         chunks = []
-        for idx in range(self.max_slots):
-            if idx < len(self.units):
-                chunk = self.units[idx].encode()
+        for slot in range(self.max_slots):
+            if slot in unit_by_slot:
+                chunk = unit_by_slot[slot].encode()
             else:
                 chunk = b"\x00" * UNIT_FRAME_SIZE
             chunks.append(chunk)
@@ -453,14 +506,23 @@ class UnitTable:
     def add_unit(self, unit: UnitRecord) -> None:
         if len(self.units) >= self.max_slots:
             raise ValueError(f"No free slots available in {self.kind} unit table.")
-        unit.slot = len(self.units)
+
+        # Find the first available slot
+        used_slots = {u.slot for u in self.units}
+        for slot in range(self.max_slots):
+            if slot not in used_slots:
+                unit.slot = slot
+                break
+        else:
+            # This shouldn't happen if len check above is correct, but be safe
+            raise ValueError(f"No free slots available in {self.kind} unit table.")
+
         unit.raw_words = unit.raw_words or [0] * UNIT_FRAME_WORDS
         self.units.append(unit)
 
     def remove_unit(self, slot: int) -> None:
+        # Remove the unit with the specified slot, preserving other slot numbers
         self.units = [unit for unit in self.units if unit.slot != slot]
-        for idx, unit in enumerate(self.units):
-            unit.slot = idx
 
 
 @dataclass
@@ -477,7 +539,7 @@ class MapFile:
         return len(self.regions)
 
     @classmethod
-    def load(cls, path: Path) -> "MapFile":
+    def load(cls, path: Path, template_library: Optional[Dict[str, List[TemplateRecord]]] = None) -> "MapFile":
         data = path.read_bytes()
         region_count, offset = _read_word(data, 0)
         regions: List[MapRegion] = []
@@ -496,7 +558,10 @@ class MapFile:
         pointer_data_base = pointer_table_offset + 16 * 4
         pointer_blob = bytearray(data[pointer_data_base:])
         pointer_entries = []
-        template_library = load_template_library(path.parent)
+
+        # Load templates from the map file's directory if not provided
+        if template_library is None:
+            template_library = load_template_library(path.parent)
 
         # Determine actual chunk extents by looking at next start.
         abs_entries = sorted(
@@ -532,13 +597,19 @@ class MapFile:
                 continue
             units = parse_unit_table(entry.data)
             templates = template_library.get(kind, [])
+
+            # Filter out units with invalid template_ids (these are empty/unused slots)
+            # The game uses template_id >= len(templates) to mark unused slots
+            valid_units = []
             for unit in units:
                 if 0 <= unit.template_id < len(templates):
                     unit.template_icon = templates[unit.template_id].icon_index
+                    valid_units.append(unit)
+
             unit_tables[kind] = UnitTable(
                 kind=kind,
                 pointer_entry=entry,
-                units=units,
+                units=valid_units,
                 max_slots=len(entry.data) // UNIT_FRAME_SIZE,
             )
 
@@ -589,7 +660,7 @@ class MapFile:
 
 
 def parse_region_block(block: bytes, index: int) -> MapRegion:
-    header_len = REGION_RECORD_LEN - 32
+    header_len = REGION_RECORD_LEN - 32  # 33 bytes
     header = block[:header_len]
     name_end = header.find(b"\x00")
     if name_end == -1:
@@ -598,27 +669,68 @@ def parse_region_block(block: bytes, index: int) -> MapRegion:
     else:
         name_bytes = header[:name_end]
         cursor = name_end + 1
+
     fields: List[RegionField] = []
+    tail_data_start = header_len  # Track where tail data actually starts
+
     while cursor < header_len:
         next_zero = header.find(b"\x00", cursor)
         if next_zero == -1:
+            # Field runs to end of header - check if it continues into tail
             field_bytes = header[cursor:]
             cursor = header_len
             has_null = False
+
+            # If last field doesn't end with NUL and tail starts with printable char,
+            # the field spans into the tail section (common pattern in adjacency fields)
+            if field_bytes and field_bytes[-1] != 0 and header_len < len(block):
+                tail_start = header_len
+                # Find the next NUL in the tail
+                next_zero_in_tail = block.find(b"\x00", tail_start)
+                if next_zero_in_tail != -1 and next_zero_in_tail > tail_start:
+                    # Extend field with tail bytes
+                    extension = block[tail_start:next_zero_in_tail]
+                    # Only extend if extension contains printable/uppercase chars
+                    if extension and all(0x41 <= b <= 0x5A for b in extension):
+                        field_bytes = field_bytes + extension
+                        has_null = True
+                        # Update where tail data actually starts (after the extended field + NUL)
+                        tail_data_start = next_zero_in_tail + 1
         else:
             field_bytes = header[cursor:next_zero]
             cursor = next_zero + 1
             has_null = True
         fields.append(RegionField(raw=field_bytes, has_trailing_null=has_null))
-    tail = block[-32:]
-    tail_words = list(struct.unpack("<16H", tail))
+
+    # Parse tail words starting from where fields actually end
+    # Tail section is 32 bytes, starting at byte 33
+    tail_section = block[header_len:REGION_RECORD_LEN]
+
+    # If tail_data_start > header_len, fields spanned into tail
+    # We need to skip those bytes when parsing tail_words
+    tail_offset = tail_data_start - header_len  # Offset into tail section
+
+    # Parse tail_words from the remaining tail data
+    tail_data = tail_section[tail_offset:]
+
+    # Parse as many words as we can from remaining tail data
+    word_count = min(16, len(tail_data) // 2)
+    if word_count > 0:
+        tail_words = list(struct.unpack("<" + "H" * word_count, tail_data[:word_count * 2]))
+        # Pad to 16 words if necessary
+        while len(tail_words) < 16:
+            tail_words.append(0)
+    else:
+        tail_words = [0] * 16
 
     adjacency_idx: Optional[int] = None
     region_code_idx: Optional[int] = None
     for idx_field, field in enumerate(fields):
         text = field.text()
+        # Skip fields with non-printable characters - these are format control codes
         if adjacency_idx is None and text and text.isupper() and len(text) % 2 == 0:
-            adjacency_idx = idx_field
+            if all(c.isprintable() for c in text):
+                adjacency_idx = idx_field
         if region_code_idx is None and _find_region_code(text):
             region_code_idx = idx_field
 
@@ -627,6 +739,7 @@ def parse_region_block(block: bytes, index: int) -> MapRegion:
         name=name_bytes.decode(SCENARIO_TEXT_ENCODING, errors="replace"),
         fields=fields,
         tail_words=tail_words,
+        tail_data_start=tail_data_start,
         adjacency_field_index=adjacency_idx,
         region_code_field_index=region_code_idx,
     )

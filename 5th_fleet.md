@@ -2,6 +2,116 @@
 
 ## Tooling
 
+### Disassembly
+- **`disasm.txt`**: IDA Pro disassembly of `Fleet.exe` (386k lines) - **RECOMMENDED for reverse engineering**
+  - Superior cross-references (DATA XREF, CODE XREF annotations)
+  - Better function detection and naming
+  - Example: `"scenario.dat" ; DATA XREF: sub_8E20F+18o` shows exactly which function references the string
+
+#### Why IDA Pro is Preferred
+IDA's text export preserves cross-references inline, so it is obvious which functions touch a string or data structure:
+```asm
+dseg:4B90 aScenario_dat    db 'scenario.dat',0     ; DATA XREF: sub_8E20F+18o
+                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^
+                                                     Used by sub_8E20F at offset +18
+```
+Contrast with the Ghidra export, which omits that context:
+```asm
+60cb:4b90 "scenario.dat"
+```
+
+#### Reading IDA Annotations
+`DATA XREF` entries list every function that reads or writes a datum, while `CODE XREF` entries show which callers reach a procedure. A typical procedure header looks like:
+```asm
+ovr148:0000 sub_7D820      proc far                 ; CODE XREF: sub_4F5C5J
+```
+The segment (`ovr148`) and offset (`0000`) form the 16-bit address, and the trailing comment lists known callers.
+
+#### Navigating the Disassembly
+Find a function definition by searching for its `proc` declaration:
+```bash
+grep "^sub_8E20F.*proc" disasm-ida.txt
+```
+Trace usage by following the call chain. For example, locating the code that loads `scenario.dat`:
+```bash
+grep '"scenario.dat"' disasm-ida.txt
+grep "^.*sub_8E20F.*proc" disasm-ida.txt
+sed -n '301259,301720p' disasm-ida.txt
+```
+Use `sed` line ranges to read the entire routine and note `call` instructions to hop to deeper helpers.
+
+#### Hunting Constants and Access Patterns
+Leverage `grep` to pinpoint structure math and file I/O:
+```bash
+grep "imul.*41h" disasm-ida.txt            # 65-byte region record multiplier
+grep "\\[bx+36h\\]" disasm-ida.txt         # Accesses offset 0x36 in a region record
+grep "int.*21h" disasm-ida.txt             # DOS file operations
+grep "mov.*ah.*3fh" disasm-ida.txt         # AH=3Fh (read file)
+grep "mov.*ah.*3dh" disasm-ida.txt         # AH=3Dh (open file)
+```
+For generic pattern hunts, use pipelines:
+```bash
+grep "41h" disasm-ida.txt | grep -E "imul|push|mov"
+grep "proc far" disasm-ida.txt | cut -d' ' -f2        # Quick function inventory
+```
+
+#### Quick Search Recipes
+Strings, callers, and structure touches can be surfaced quickly:
+```bash
+grep "Unable to open" disasm-ida.txt                    # Locate specific error text
+grep "Unable to open.*XREF" disasm-ida.txt              # Show XREF comments for that string
+grep "call.*sub_7D820" disasm-ida.txt | head -10        # Who invokes the bulk loader
+grep "\\[.*+32h\\]" disasm-ida.txt                      # Accesses offset 0x32 (50 decimal)
+grep "es:\\[bx+0x" disasm-ida.txt                       # All ES-segment memory touches
+grep "imul" disasm-ida.txt                              # Multiplication patterns
+```
+To trace callers iteratively:
+```bash
+grep "call.*sub_7D820" disasm-ida.txt | head -10
+grep "CODE XREF.*sub_8CA14" disasm-ida.txt
+grep "^.*sub_8CA14.*proc" disasm-ida.txt
+```
+
+#### Addressing and Line Numbers
+IDA uses `segment:offset` addresses (`ovr161:01AF`), where the segment name identifies an overlay (`ovrNNN`), code segment (`seg004`), or data segment (`dseg`). Absolute addresses depend on runtime loading, so rely on the segment label plus offset when cross-referencing.
+
+Keep useful `sed` ranges handy for large routines:
+```bash
+sed -n '301259,301720p' disasm-ida.txt  # sub_8E20F
+sed -n '268162,268400p' disasm-ida.txt  # sub_7D820
+sed -n '45500,45600p' disasm-ida.txt    # Region access code
+```
+Count matches or capture line numbers when triaging large sets:
+```bash
+grep -c "imul.*41h" disasm-ida.txt
+grep -n "sub_7D820.*proc" disasm-ida.txt
+```
+
+#### Worked Example: Region Parsing
+One path to the region loader:
+```bash
+grep "imul.*41h" disasm-ida.txt | head -1
+sed -n '45530,45550p' disasm-ida.txt
+grep -B50 "seg004:2B6D" disasm-ida.txt | grep "proc far"
+grep "call.*sub_XXXXX" disasm-ida.txt
+```
+Breaking it down:
+1. Identify the multiplication by 0x41 (65) that scales region indices.
+2. Read the surrounding lines to confirm context.
+3. Walk backward to the owning procedure.
+4. Chase `call` sites to see which code drives the loader.
+
+#### Known Function Highlights
+- `sub_8E20F` (`ovr161:01AF`): loads `scenario.dat` (records are 89 bytes).
+- `sub_8CA14` (`ovr160:2023`): loads map files and iterates 65-byte region records.
+- `sub_7D820` (`ovr148:0000`): generic bulk data reader.
+- `sub_2375`: low-level DOS `INT 21h` read wrapper.
+- `sub_4F5C5`: thunk that jumps into `sub_7D820`.
+
+#### Further Investigation Targets
+Promising follow-up areas include adjacency handling (look for two-letter region codes), map display routines (fields around header offset 0x30), unit table parsing (0x20-sized records), the 16-entry pointer section handler, and the objective interpreter (likely a jump table of opcode handlers).
+
+### Analysis Tools
 - `Fleet.exe` is a Borland/Turbo Pascal 16-bit DOS program. Graphics use the Borland Graphics Interface with the EGAVGA 2.00 BGI driver.
 - `dump_5th_fleet.py` parses `SCENARIO.DAT` and the scenario `.DAT` files, exposing text, region records, pointer sections, and a quick summary of the order of battle. Run:
   ```bash
@@ -13,6 +123,13 @@
   python decode_objectives.py
   ```
 - `analyze_opcodes.py` performs statistical analysis on opcode usage patterns across all scenarios and searches `Fleet.exe` for interpreter vocabulary.
+- `scenario_editor.py` - Tkinter GUI for editing scenarios, maps, regions, and order of battle. Run:
+  ```bash
+  python scenario_editor.py
+  ```
+
+### Testing
+- `test_region_roundtrip.py` - Validates that region parsing preserves binary data byte-for-byte (all 24 maps pass)
 
 ## Key Data Files
 
@@ -32,13 +149,18 @@ General layout:
 
 1. `word` region count (22 for playable scenarios).
 2. Region records (`count` × 65 bytes):
-   - `char[?]` region name (NUL terminated).
-   - 3–6 additional `char` fields containing:
-     - Format control strings (e.g., `\x0fKK` sequences referencing country codes).
-     - Region code such as `rpML` (`ML` is the two-letter adjacency token).
-     - Adjacency list: concatenated 2-character tokens that match the `rp??` codes (e.g. `GASOSY` → `rpGA`, `rpSO`, `rpSY` → Gulf of Aden, Somalia, Seychelles). The parser now maps these tokens to full names.
-     - Optional filenames (e.g. `SO.PCX`).
-- Trailing 32-byte block per region containing miscellaneous metadata. The parser exposes the raw words plus a derived `map_position` (`panel` flag for the scrolling board page, `x`/`y` pixel coordinate, and a `width` for the highlight rectangle). The first few bytes occasionally hold short ASCII labels used elsewhere.
+   - Layout: 33-byte header + 32-byte tail
+   - Header contains:
+     - `char[?]` region name (NUL terminated).
+     - 3–6 additional `char` fields containing:
+       - Format control strings (e.g., `\x0fKK` sequences referencing country codes).
+       - Region code such as `rpML` (`ML` is the two-letter adjacency token).
+       - Adjacency list: concatenated 2-character tokens that match the `rp??` codes (e.g. `GASOSY` → `rpGA`, `rpSO`, `rpSY` → Gulf of Aden, Somalia, Seychelles). The parser now maps these tokens to full names.
+       - Optional filenames (e.g. `SO.PCX`).
+   - **Important parsing considerations**:
+     - Region fields may contain multiple uppercase even-length strings. The correct adjacency field is the one containing **only printable characters**. Format control strings (containing `\x0f`, `\x95`, etc.) must be filtered out during parsing to avoid misidentification. Example: Africa region has both `\x0f\x95MX\x0f\x95M\x01` (format codes) and `GASOSY` (true adjacencies); only the latter should be parsed.
+     - **Tail-spanning fields**: Adjacency fields frequently overflow from the 33-byte header into the 32-byte tail section. This occurs in ~50% of regions across all maps. Example: East Indian Ocean's adjacency field `WSBBSLMLCA` has bytes 0-8 (`WSBBSLMLC`) in the header and byte 9 (`A`) at offset 33 (first byte of tail). Parsers must check if the last header field ends with an uppercase letter and the tail starts with uppercase letters, then extend the field until the next NUL terminator.
+   - Tail (32-byte block) contains: miscellaneous metadata words, including `map_position` data (`panel` flag for the scrolling board page, `x`/`y` pixel coordinate, and a `width` for the highlight rectangle). The first few bytes occasionally hold short ASCII labels or the final characters of tail-spanning fields.
 3. Pointer table: 16 entries of `<offset_word, size_word>`. Offsets are relative to the pointer-data base (immediately following the table) and several entries overlap on purpose.
 4. Pointer data sections: additional structures referenced via the pointer table. Contents vary, examples include:
    - Index lists (pairs of words where values align with region indices).
@@ -65,7 +187,7 @@ Cross-referencing scenario objectives with observed opcode patterns yields this 
 | Opcode | Mnemonic | Operand | Description |
 |--------|----------|---------|-------------|
 | `0x00` | `END` | Region index | End-of-script / victory check for region |
-| `0x01` | `TURNS` | Turn count | Turn limit (`0x0d`=13, `0x0f`=15, `0x00`=unlimited) |
+| `0x01` | `TURNS` | Turn count | Turn limit (NOTE: value 0x0d appears in many scenarios but doesn't directly match player-visible turn counts) |
 | `0x03` | `SCORE` | VP ref | Victory point objective (indexes VP table) |
 | `0x04` | `CONVOY_RULE` | Flags | Convoy delivery rule flags |
 | `0x05` | `SPECIAL_RULE` | Code | `0xfe`=no cruise missiles, `0x06`=convoy active, `0x00`=standard |
@@ -104,6 +226,162 @@ Cross-referencing scenario objectives with observed opcode patterns yields this 
 ```
 
 Use `decode_objectives.py` to decode all scenarios.
+
+#### Turn Count Encoding - Important Findings
+
+Through detailed analysis of all 10 stock scenarios, the relationship between opcode values and player-visible turn limits is complex:
+
+**Key Observations:**
+1. Many scenarios use opcode `0x01` (TURNS) with operand `0x0d` (13), but their actual player-visible turn counts vary (5, 9, 10, 12 turns).
+2. Opcode `0x2d` (ALT_TURNS) contains the correct turn limit in scenarios that use it (e.g., scenario 7: ALT_TURNS(15) matches "15 turns").
+3. The opcode `0x01` value may represent an internal time unit conversion or serve as a template/default value.
+4. All stock scenarios use 8-hour game turns (e.g., "5 turns (40 hours)" = 5×8, "12 turns (4 days)" = 12×8).
+
+**Scenario Analysis Table:**
+
+| Scenario | Title | Manual Turns | First Opcode | Notes |
+|----------|-------|--------------|--------------|-------|
+| 0 | Maldives | 5 turns (40h) | TURNS(13) | Turn count doesn't match |
+| 1 | Raiders | 12 turns (96h) | TURNS(13) | Turn count doesn't match |
+| 2 | Arabian Sea | 10 turns (80h) | TURNS(13) | Turn count doesn't match |
+| 3 | Carrier Raid | 12 turns (96h) | TURNS(13) | Turn count doesn't match |
+| 4 | Locate/Destroy | 9 turns (72h) | TURNS(13) | Turn count doesn't match |
+| 5 | Convoy Battles | 7 turns (56h) | CONVOY_PORT(6) | No TURNS opcode found |
+| 6 | Bay of Bengal | 9 turns (72h) | opcode 0x07(9) | First operand matches! |
+| 7 | Convoys to Iran | 15 turns (120h) | **ALT_TURNS(15)** | Perfect match with 0x2d |
+| 8 | Indian Sideshow | 15 turns (120h) | END(109), then 0x35(15) | Uses unknown opcode 0x35 |
+| 9 | Indian War | 30 turns (240h) | END(109), then 0x3a(30) | Operand in CONVOY_FALLBACK |
+
+**Hypothesis:** The game may use opcode `0x01` as a default/template value and calculate the actual turn limit from other data (scenario metadata, opcode `0x2d`, or external configuration). The precise mechanism requires further disassembly analysis of the scenario loading and turn-counting code in `Fleet.exe`.
+
+#### Disassembly Analysis - Turn Counter Implementation
+
+**Turn Counter Memory Locations:**
+
+The game stores turn-related data in segment `60cb` (the main data segment):
+
+| Memory Location | Purpose | Details |
+|----------------|---------|---------|
+| `60cb:007e` | **Turn Limit Storage** | Primary location storing maximum turns for current scenario |
+| `60cb:007d` | Turn Limit Comparison | Used to check if turn limit is 30 (0x1e) |
+| `60cb:b3d6` | Game State Data | Contains turn-related data accessed during game processing |
+| `60cb:ba26` | **Objective Pointer** | Pointer to current objective structure (used by TURNS handler) |
+
+**Key Functions Managing Turn Limits:**
+
+| Function | Address | Purpose | Turn Values Set |
+|----------|---------|---------|-----------------|
+| `FUN_1000_31cf` | `1000:31cf` | Scenario selection & initialization | Sets `[007e]` to **5 turns** |
+| `FUN_1000_76c3` | `1000:76c3` | Scenario-specific turn management | Sets `[007e]` to **19 turns** |
+| `FUN_1000_7bcd` | `1000:7bcd` | **Primary scenario turn loader** | Sets 2, 8, 14, or 20 turns |
+
+**Primary Turn Limit Loading Function (`FUN_1000_7bcd`):**
+
+This function sets different turn limits based on scenario conditions:
+- At `1000:7d18`: Sets `[007e]` to **0x02** (2 turns)
+- At `1000:7d5f`: Sets `[007e]` to **0x08** (8 turns)
+- At `1000:7d9b`: Sets `[007e]` to **0x14** (20 turns)
+- At `1000:7de6`: Sets `[007e]` to **0x08** (8 turns)
+
+None of these hardcoded values (2, 5, 8, 19, 20) match the expected turn counts (5, 7, 9, 10, 12, 15, 30), suggesting the turn limit is calculated or loaded from elsewhere.
+
+**Turn Counter Processing Code:**
+
+At address `1000:2969-2983`, the game uses the turn limit as an index:
+```assembly
+CMP   word ptr [DAT_60cb_007e],0x0      ; Check if turn limit > 0
+MOV   BX,word ptr [DAT_60cb_007e]       ; Load turn limit into BX
+SHL   BX,CL                              ; Shift for table indexing
+MOV   DX,word ptr [BX + 0xad1c]         ; Get turn data from table
+MOV   AX,word ptr [BX + 0xad1a]         ; Get additional turn data
+```
+
+This indicates the turn limit is used to index into game state tables at offsets `0xad1c` and `0xad1a`.
+
+#### TURNS Opcode (0x01) Handler Analysis
+
+**Critical Discovery:** The TURNS opcode handler **completely ignores the operand value**.
+
+**Handler Location:** `4430:1001` (13 bytes)
+
+**Complete Disassembly:**
+```assembly
+4430:1001  PUSH    BP                          ; Save frame pointer
+4430:1002  MOV     BP,SP                       ; Set up stack frame
+4430:1004  PUSH    DS                          ; Save data segment
+4430:1005  MOV     AX,0x60cb                   ; Load data segment
+4430:1008  MOV     DS,AX                       ; Set DS to 60cb
+4430:100a  MOV     BX,word ptr [DAT_60cb_ba26] ; Load objective struct pointer
+4430:100e  MOV     AX,word ptr [BX + 0x4]      ; Read field at offset +4
+4430:1011  POP     DS                          ; Restore data segment
+4430:1012  POP     BP                          ; Restore frame pointer
+4430:1013  RETF                                ; Return (AX = result)
+```
+
+**What This Means:**
+
+1. The handler receives the operand as `param_3` but **never accesses it**
+2. Instead, it loads a pointer from global memory `[60cb:ba26]`
+3. It reads a 16-bit value from offset `+0x4` within the structure pointed to by `ba26`
+4. This value is returned in `AX` register
+5. **No arithmetic, no conversion, no use of the operand at all**
+
+**Conclusion:** The TURNS opcode (0x01) is a "getter" that returns a pre-computed value from the objective structure at offset +4. The operand encoded in the bytecode (e.g., 0x0d = 13) is ignored and serves no functional purpose—it may be a legacy artifact or documentation hint.
+
+**The Real Turn Limit Source:** The actual turn limit must be loaded into the objective structure (at `ba26 + 0x4`) during scenario initialization, likely from:
+- Scenario metadata (bytes between scenario key and difficulty string)
+- External configuration data
+- Hardcoded values based on scenario index
+- A separate data table indexed by scenario number
+
+#### Scenario Metadata Structure Discovery
+
+Investigation revealed a consistent metadata pattern in each 5,883-byte scenario block:
+
+**Metadata Location:** Starts at `difficulty_position - 15` bytes
+
+**Structure Format:**
+```
+Offset from diff:  -15  -14 -13 ... -6  -5  -4  -3  -2  -1   0
+Pattern:          0x0f 0xa7 <scenario_key> 0x00 [?] 0x0f 0x80 0x01 0x8f <difficulty_string>
+                   ^^^^      ^^^^^^^^^^^^^^^^^^^     ^^^^^^^^^^^^^^^^^^^^
+                  Marker     Variable-length key     Fixed pattern (0x0f80018f)
+```
+
+**Examples:**
+- Scenario 0 (Maldives, 5 turns): `0f a7 4d 61 6c 64 69 76 65 00 b0 0f 80 01 8f` + "Low"
+- Scenario 2 (Barabsea, 10 turns): `0f a7 42 61 72 61 62 73 65 61 00 0f 80 01 8f` + "Low"
+- Scenario 7 (Conviran, 15 turns): `0f a7 43 6f 6e 76 69 72 61 6e 00 0f 80 01 8f` + "Medium"
+
+**Constant Pattern Analysis:**
+- `0x0fa7`: Metadata header marker
+- `<scenario_key>`: ASCII text (e.g., "Maldive", "Raiders", "Barabsea")
+- `0x00`: NUL terminator for key
+- Byte at diff-6: `0xb0` for scenarios 0-1, `0x00` for scenarios 2-9 (purpose unknown)
+- `0x0f 0x80 0x01 0x8f`: Fixed 4-byte pattern
+  - `0x0f`: Unknown flag/marker
+  - `0x80 0x01`: As little-endian word = **0x0180** (384 decimal) - referenced in code at 1000:2034
+  - `0x8f`: Unknown flag/marker
+
+**Turn Count Storage Mystery:**
+
+Despite extensive disassembly analysis, the actual player-visible turn limits (5, 7, 9, 10, 12, 15, 30) are **NOT stored** in any of these locations:
+1. Not in the TURNS opcode (0x01) operands - these are ignored by the handler
+2. Not in the pre-difficulty metadata bytes
+3. Not in a simple lookup table in `Fleet.exe`
+4. Not hardcoded in `FUN_1000_7bcd` (sets 2, 8, 20, or 8 based on scenario conditions)
+
+**Hypotheses:**
+1. **External Data File**: Turn limits may be stored in an external configuration file (not yet identified)
+2. **Derived from Difficulty**: The combination of difficulty level + scenario index may map to turn counts
+3. **Complex Calculation**: Turn limits may be calculated from multiple metadata fields using a formula
+4. **Overlay/Runtime Patch**: The game may patch turn limits at runtime from data in a different file segment
+
+**Action Items for Complete Resolution:**
+- Search for additional data files in the game directory (config files, initialization data)
+- Trace the scenario loading code path completely from file open to turn counter initialization
+- Examine memory dumps during actual game execution to see where turn limits are stored
+- Check if there are overlay files or data segments not yet analyzed
 
 ### Order of Battle (OOB)
 
@@ -275,9 +553,34 @@ Use `decode_objectives.py` to decode all scenarios.
   - `*.GXL` files (Genus Microprogramming format) hold additional screens, sprites, UI elements; they embed PCX data internally.
 - These can be edited or replaced with standard graphics tools (convert/unpack PCX/GXL as needed), independent of the scenario `.DAT` files.
 
-## Next Steps
+## Region Record Parsing - Disassembly Analysis
 
-1. Extend `dump_5th_fleet.py` (or related tooling) to fully decode the remaining pointer payloads (base layouts, reinforcement scripts, OOB flag fields) so edits can be made safely.
-2. Build read/write capabilities: write back modified text and binary structures while keeping offsets aligned.
-3. Translate unit/weapon identifiers via `TRM*.DAT` and `REFER.DAT` to support a user-friendly editor (drop-down lists, etc.).
-4. Investigate `Fleet.exe` routines for rule logic if deeper behavioral changes are needed beyond data edits.
+### Confirmed from IDA/Ghidra Disassembly:
+
+1. **Region Record Size**: 65 bytes (0x41) confirmed by `IMUL AX,0x41` at multiple locations
+   - IDA: `seg004:2B6D`, `ovr146:0692`, `ovr190:027D`, and 60+ other locations
+   - Code pattern: `mov al, byte_region_index; cbw; imul ax, 41h`
+
+2. **Map File Loading**: IDA cross-references revealed complete loading chain:
+   - String `"scenario.dat"` at `dseg:4B90` → referenced by `sub_8E20F+18o`
+   - Function `sub_8E20F` (ovr161:01AF) loads scenario.dat (89-byte records)
+   - Function `sub_8CA14` (ovr160:2023) loads map files with `push 41h ; 'A'` (65-byte regions)
+   - Function `sub_7D820` (ovr148:0000) is generic data loader called by both
+
+3. **Region Data Loading**: Function `sub_7D820` (ovr148:0000):
+   - Reads count word at file offset 0
+   - Allocates `count * size` bytes (size passed as parameter, e.g., 0x41 for regions)
+   - Calls `sub_2375` (file read wrapper) to bulk-read all records
+   - Does NOT parse individual fields - loads entire block as-is
+
+4. **Tail Section Access**: Game directly accesses fixed offsets in region records:
+   - `+30h` (48): Pointer to region array base
+   - `+32h` (50): Segment for region data
+   - `+36h` (54): 21 bytes into tail section (used for zone type checks)
+   - No evidence of string parsing loops for header fields
+
+5. **Header Field Parsing**: **NOT FOUND** in disassembly
+   - No string scanning (SCASB) for NUL-terminated fields in region headers
+   - No loops iterating through 0-32 byte range looking for field boundaries
+   - Game appears to only use: region name (display) and tail section data (coordinates, types)
+   - **Implication**: Adjacency field parsing is likely performed on-demand when needed, not during initial load

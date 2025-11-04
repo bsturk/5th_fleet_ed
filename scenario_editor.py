@@ -281,6 +281,7 @@ class ScenarioEditorApp:
     def _build_map_tab(self) -> None:
         frame = ttk.Frame(self.notebook)
         self.notebook.add(frame, text="Map")
+        self.map_tab_index = len(self.notebook.tabs()) - 1  # Track tab index for updating
 
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(0, weight=1)
@@ -354,6 +355,7 @@ class ScenarioEditorApp:
     def _build_oob_tab(self) -> None:
         frame = ttk.Frame(self.notebook)
         self.notebook.add(frame, text="Order of Battle")
+        self.oob_tab_index = len(self.notebook.tabs()) - 1  # Track tab index for updating
 
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(2, weight=1)
@@ -737,6 +739,11 @@ class ScenarioEditorApp:
             return
         self.map_file_path = path
         self.oob_map_filename_var.set(f"({path.name})")
+
+        # Update tab labels to show filenames
+        self.notebook.tab(self.map_tab_index, text=f"Map ({path.name})")
+        self.notebook.tab(self.oob_tab_index, text=f"Order of Battle ({path.name})")
+
         try:
             self.template_library = load_template_library(path.parent)
         except Exception:  # pragma: no cover
@@ -1106,12 +1113,21 @@ class ScenarioEditorApp:
         lines.append("=" * 70)
         lines.append("")
 
+        # Track if we find turn-related opcodes
+        found_turns_01 = False
+        found_alt_turns = False
+
         for opcode, operand in script:
             if opcode == 0x01:  # TURNS
+                found_turns_01 = True
                 if operand == 0xfe or operand == 0:
-                    lines.append("• Duration: Until objectives complete")
+                    lines.append("• TURNS opcode: Until objectives complete")
                 else:
-                    lines.append(f"• Turn limit: {operand} turns")
+                    lines.append(f"• TURNS opcode: {operand} (NOTE: May not match player-visible turn limit)")
+
+            elif opcode == 0x2d:  # ALT_TURNS
+                found_alt_turns = True
+                lines.append(f"• Turn limit: {operand} turns (ALT_TURNS)")
 
             elif opcode == 0x05:  # SPECIAL_RULE
                 if operand == 0xfe:
@@ -1151,11 +1167,34 @@ class ScenarioEditorApp:
             elif opcode == 0x18:  # CONVOY_PORT
                 lines.append(f"• Convoy destination (port ref: {operand})")
 
+            elif opcode == 0xbb:  # ZONE_ENTRY
+                region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                lines.append(f"• Zone entry requirement: {region_name}")
+
+            elif opcode == 0x29:  # REGION_RULE
+                region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                lines.append(f"• Region-based victory rule: {region_name}")
+
+            elif opcode == 0x3a:  # CONVOY_FALLBACK
+                lines.append(f"• Convoy fallback port list (ref: {operand})")
+
+            elif opcode == 0x3c:  # DELIVERY_CHECK
+                lines.append(f"• Delivery success/failure check (flags: {operand})")
+
+            elif opcode == 0x3d:  # PORT_LIST
+                lines.append(f"• Multi-destination port list (ref: {operand})")
+
             elif opcode in OPCODE_MAP:
                 mnemonic, _, description = OPCODE_MAP[opcode]
                 lines.append(f"• {description} (param: {operand})")
             else:
                 lines.append(f"• Unknown: opcode 0x{opcode:02x}, operand {operand}")
+
+        # Add warning if we only found TURNS(0x01) without ALT_TURNS
+        if found_turns_01 and not found_alt_turns:
+            lines.append("")
+            lines.append("⚠ WARNING: TURNS opcode (0x01) value may not reflect actual game turn limit.")
+            lines.append("  See documentation for details on turn count encoding discrepancies.")
 
         return "\n".join(lines)
 
