@@ -1,8 +1,41 @@
 # 5th Fleet Reverse-Engineering Notes
 
-## Tooling
+## General Info
 
-### Disassembly
+### Project Overview
+- Reverse-engineering the DOS-era `Fleet.exe` and its data files to understand scenario structure, objectives, and asset formats.
+- `Fleet.exe` is a Borland/Turbo Pascal 16-bit DOS program that relies on the EGAVGA 2.00 BGI driver for graphics.
+- Game data lives in `game/` (scenario `.DAT` files, resource containers) with supporting research artifacts in `notes_reversing.txt`, `disasm.txt`, `tools/`, and Python helpers.
+- Documentation here captures findings, workflows, and resource-specific notes so tweaks stay reproducible.
+
+### Tooling Summary
+- `disasm.txt` (IDA text export) is the authoritative code reference—see the dedicated section for navigation tips.
+- Python helpers (`tools/dump_5th_fleet.py`, `tools/decode_objectives.py`, `tools/analyze_opcodes.py`, `scenario_editor.py`) parse and patch scenario data; each script has a section below with usage notes.
+- Auxiliary references: PCX/GXL asset dumps, and handwritten notes in `notes_reversing.txt`.
+
+### Workflow Tips
+- Start with the relevant resource section, then jump into `disasm.txt` or the associated script to trace deeper details.
+- Keep terminal one-liners handy for grepping disassembly (examples included per resource) and for running Python helpers against specific scenario files.
+- When experimenting, copy binaries first - the executables and `.DAT` files have no built-in checksums, but sizes and pointer tables must be preserved.
+
+### Editing Considerations
+- Scenario modifications:
+  - Text changes: edit `SCENARIO.DAT` blocks (preserve block length).
+  - Region edits: modify `name`, adjacency codes, numeric tail entries in the 65-byte records.
+  - Base/unit additions: pointers 5/8/11 contain 32-byte frames referencing the air/surface/submarine template libraries; edit those frames to adjust the OOB.
+  - Map highlight adjustments: the derived `map_position` (panel/x/y/width) comes from the per-region tail bytes; tweak these to move the highlight rectangle between map panels (`panel` toggles between the two scrolling boards). To change the actual PCX location, add the panel base offset described above.
+- All numeric fields are little-endian. Keep counts in the pointer table in sync with actual data sizes.
+- No known checksums; the game accepts edited data if sizes/offsets remain consistent.
+
+### External Map/Graphics Editing
+- Strategical, operational, and tactical maps are external assets, not bundled in the executable:
+  - `MAPVER20.PCX` holds the full-resolution political board (2861×2126); `SMALLMP.PCX` is the 89×66 overview used for mini-map and briefing screens.
+  - `*.GXL` files (Genus Microprogramming format) hold additional screens, sprites, UI elements; they embed PCX data internally.
+- These assets can be edited or replaced with standard graphics tools (convert/unpack PCX/GXL as needed) independent of the scenario `.DAT` files.
+
+## Resource Guides
+
+### `disasm.txt` (IDA Export)
 - **`disasm.txt`**: IDA Pro disassembly of `Fleet.exe` (386k lines) - **RECOMMENDED for reverse engineering**
   - Superior cross-references (DATA XREF, CODE XREF annotations)
   - Better function detection and naming
@@ -14,10 +47,6 @@ IDA's text export preserves cross-references inline, so it is obvious which func
 dseg:4B90 aScenario_dat    db 'scenario.dat',0     ; DATA XREF: sub_8E20F+18o
                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^
                                                      Used by sub_8E20F at offset +18
-```
-Contrast with the Ghidra export, which omits that context:
-```asm
-60cb:4b90 "scenario.dat"
 ```
 
 #### Reading IDA Annotations
@@ -111,29 +140,32 @@ Breaking it down:
 #### Further Investigation Targets
 Promising follow-up areas include adjacency handling (look for two-letter region codes), map display routines (fields around header offset 0x30), unit table parsing (0x20-sized records), the 16-entry pointer section handler, and the objective interpreter (likely a jump table of opcode handlers).
 
-### Analysis Tools
-- `Fleet.exe` is a Borland/Turbo Pascal 16-bit DOS program. Graphics use the Borland Graphics Interface with the EGAVGA 2.00 BGI driver.
-- `dump_5th_fleet.py` parses `SCENARIO.DAT` and the scenario `.DAT` files, exposing text, region records, pointer sections, and a quick summary of the order of battle. Run:
+### `dump_5th_fleet.py`
+- Parses `SCENARIO.DAT` and companion scenario `.DAT` files to surface text, region records, pointer sections, and order-of-battle summaries.
+- Usage:
   ```bash
   python dump_5th_fleet.py --scenario game/SCENARIO.DAT --map game/MALDIVE.DAT
   ```
   Add `--json` for machine-readable output.
-- `decode_objectives.py` decodes the objective scripts from `SCENARIO.DAT` into human-readable victory conditions using the opcode mapping table. Run:
+
+### `decode_objectives.py`
+- Converts the objective scripts stored inside `SCENARIO.DAT` into human-readable victory conditions using the opcode mapping table.
+- Usage:
   ```bash
   python decode_objectives.py
   ```
-- `analyze_opcodes.py` performs statistical analysis on opcode usage patterns across all scenarios and searches `Fleet.exe` for interpreter vocabulary.
-- `scenario_editor.py` - Tkinter GUI for editing scenarios, maps, regions, and order of battle. Run:
+
+### `analyze_opcodes.py`
+- Performs statistical analysis of opcode usage across all scenarios and searches `Fleet.exe` for interpreter vocabulary patterns to prioritize decompilation targets.
+
+### `scenario_editor.py`
+- Tkinter GUI for editing scenarios, maps, regions, and order of battle by manipulating the parsed data structures from the Python helpers.
+- Usage:
   ```bash
   python scenario_editor.py
   ```
 
-### Testing
-- `test_region_roundtrip.py` - Validates that region parsing preserves binary data byte-for-byte (all 24 maps pass)
-
-## Key Data Files
-
-### SCENARIO.DAT
+### Data File: `SCENARIO.DAT`
 
 - First word: number of scenarios (10).
 - Remainder: 10 fixed-size 5,883-byte blocks. Each block contains:
@@ -143,7 +175,7 @@ Promising follow-up areas include adjacency handling (look for two-letter region
 - Trailing binary payload (seems to hold victory-point tables and other per-scenario settings). Currently left as raw hex in the script output for round-tripping.
 - The scenario key matches the basename of the companion `.DAT` file that carries the actual map/OOB data (e.g. key `Maldive` → `MALDIVE.DAT`). `SCENARIO.DAT` itself contains no unit data.
 
-### Scenario `.DAT` Files (e.g., `MALDIVE.DAT`, `RAIDERS.DAT`, etc.)
+### Data File: Scenario `.DAT` Files (e.g., `MALDIVE.DAT`, `RAIDERS.DAT`)
 
 General layout:
 
@@ -168,7 +200,7 @@ General layout:
    - Unit tables (see below).
    - Mixed binary data (scripts, reinforcement schedules, etc.).
 
-### Scenario Tail / Win Logic
+### Data File: Scenario Tail / Win Logic
 
 - Each 5,883-byte scenario block ends with a compact **objective script** immediately after the difficulty string (`Low`, `Medium`, `High`). This script encodes victory conditions, turn limits, and special rules.
 - **Script format**: Sequence of little-endian 16-bit words with encoding **`(opcode << 8) | operand`** (high byte = opcode, low byte = operand). Scripts end at `0x0000` or block boundary.
@@ -383,13 +415,13 @@ Despite extensive disassembly analysis, the actual player-visible turn limits (5
 - Examine memory dumps during actual game execution to see where turn limits are stored
 - Check if there are overlay files or data segments not yet analyzed
 
-### Order of Battle (OOB)
+### Data File: Order of Battle (OOB)
 
 - Pointer entries 5, 8, and 11 hold the air, surface, and submarine OOB respectively. Each block is a sequence of 32-byte frames (16 little-endian words).
 - The low byte of word 0 is the template index into `TRMAIR.DAT`, `TRMSRF.DAT`, or `TRMSUB.DAT`. The remaining bits encode ownership/flags (`side = owner_raw & 0x03` is surfaced by the parser). Subsequent words carry deployment metadata (region hints—when the value is < number of regions we map it to the region name—plus tile coordinates/other flags).
 - The script aggregates these frames to report total units per category, the most common templates, side distribution, and a few sample deployments. Raw word data is preserved in JSON for deeper reverse-engineering.
 
-### Global Tables
+### Data Table: Global Tables
 
 - `TRMAIR.DAT`, `TRMSRF.DAT`, `TRMSUB.DAT`: Unit templates (counts followed by fixed-size records containing name, nationality code, stats, and weapon references). Needed to interpret per-scenario unit placements. Each record also carries the tactical chit index used in `MICONRES.RES`:
   - Air (`TRMAIR.DAT`): byte @ offset `0x21` (33) → icon id.
@@ -423,15 +455,15 @@ Despite extensive disassembly analysis, the actual player-visible turn limits (5
     - `MAINLIB.GXL`: Contains OPDSPLAY.PCX (operational display elements) and TRM.PCX
     - Further investigation needed to decode BTMP format and identify specific ship/aircraft silhouettes
 
-### Map Pointer Sections Relevant to Victory Logic
+### Pointer Sections Relevant to Victory Logic
 
 - **Pointer section 0**: (type, id) pairs indexing zones/bases/objectives. Format: `(type_byte, id_byte)` as little-endian words. Example: `(0x02,0x05)`, `(0x09,0x02)`. These are referenced by opcodes like `0x0c` (TASK_FORCE) when operand != `0xfe`.
 - **Pointer section 1**: (type, value) lookup table for units, special rules, and scenario-specific data. Similar format to section 0 but used for different categories of game objects.
 - **Pointer section 6**: Port lists for convoy objectives. Referenced by opcodes `0x3a` (CONVOY_FALLBACK) and `0x3d` (PORT_LIST) to specify multiple valid destination ports.
 - **Pointer section 12**: Unit deployment/setup script (NOT victory conditions). Contains `(opcode, operand)` tuples using the same interpreter instruction set. Opcodes `0x02`-`0x15` correspond to the unit-setup vocabulary (`AIR`, `SHIP`, `SUB`, `STK`, `TF`, `TG`, `CARR`, `BASE`, `SH`, `SB`). This section initializes task forces, stacks, and formations at scenario start.
 
-## JSON Fields Provided by `dump_5th_fleet.py`
-
+### JSON Output from `dump_5th_fleet.py`
+Sample structure returned by the `--json` flag; field names map directly to scenario blocks, map records, pointer sections, and unit templates.
 ```
 {
   "scenario_records": [
@@ -518,7 +550,7 @@ Despite extensive disassembly analysis, the actual player-visible turn limits (5
 }
 ```
 
-### Mapping the Strategic Board to PCX Assets
+### Graphics Assets: Strategic Board PCX
 
 - The scrolling strategic board displayed in the UI is `STRATMAP.PCX`, a 640×480, 16-colour image embedded inside `MAINLIB.GXL`. Each resource entry in `MAINLIB.GXL` stores a name followed by two 32-bit little-endian integers (`offset`, `length`). `STRATMAP.PCX` lives at offset 0x0004B851 (309 329) with length 100 197 bytes.
 - Region highlight coordinates from the `.DAT` “tail” block are local to 256-wide board panels. There are two panel pages:
@@ -536,26 +568,10 @@ Despite extensive disassembly analysis, the actual player-visible turn limits (5
   - The operational (hex) map is drawn from `TACTICAL.PCX` (offset 174 850, length 21 711 bytes) and related assets such as `DPBRIDGE.PCX` for UI chrome; these files also sit in `MAINLIB.GXL` and weave together the scrolling hex view, though the pointer-table that feeds the hex map still needs to be identified.
   - Tactical engagements use the “combat window” assets (`COMBTWIN.PCX`, plus winning-variation screens like `WINNONE .PCX`, `WINGREEN.PCX`, `WINRED  .PCX`). These PCXs control the 1‑on‑1 battle board rather than the strategic/operational overlays.
 
-## Editing Considerations
+### Region Record Parsing (Disassembly)
+Insights from the `disasm.txt` export that explain how map-region records are loaded and interpreted at runtime.
 
-- Scenario modifications:
-  - Text changes: edit `SCENARIO.DAT` blocks (preserve block length).
-  - Region edits: modify `name`, adjacency codes, numeric tail entries in the 65-byte records.
-  - Base/unit additions: pointers 5/8/11 contain 32-byte frames referencing the air/surface/submarine template libraries; edit those frames to adjust the OOB.
-  - Map highlight adjustments: the derived `map_position` (panel/x/y/width) comes from the per-region tail bytes; tweak these to move the highlight rectangle between map panels (`panel` toggles between the two scrolling boards). To change the actual PCX location, add the panel base offset described above.
-- All numeric fields are little-endian. Keep counts in the pointer table in sync with actual data sizes.
-- No known checksums; game should accept edited data if sizes/offsets remain consistent.
-
-## External Map/Graphics Editing
-
-- Strategical/operational/tactical maps are external assets, not bundled in the executable:
-  - `MAPVER20.PCX` holds the full-resolution political board (2861×2126); `SMALLMP.PCX` is the 89×66 overview used for mini-map and briefing screens.
-  - `*.GXL` files (Genus Microprogramming format) hold additional screens, sprites, UI elements; they embed PCX data internally.
-- These can be edited or replaced with standard graphics tools (convert/unpack PCX/GXL as needed), independent of the scenario `.DAT` files.
-
-## Region Record Parsing - Disassembly Analysis
-
-### Confirmed from IDA/Ghidra Disassembly:
+#### Confirmed from IDA/Ghidra Disassembly:
 
 1. **Region Record Size**: 65 bytes (0x41) confirmed by `IMUL AX,0x41` at multiple locations
    - IDA: `seg004:2B6D`, `ovr146:0692`, `ovr190:027D`, and 60+ other locations
