@@ -455,17 +455,11 @@ class ScenarioEditorApp:
         self.notebook.add(frame, text="Objectives")
 
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(2, weight=1)
-
-        ttk.Label(
-            frame,
-            text="Objective script from the trailing bytes of the selected scenario.\n"
-            "Format: (opcode << 8) | operand stored as little-endian 16-bit words.",
-        ).grid(row=0, column=0, sticky="w", padx=6, pady=4)
+        frame.rowconfigure(1, weight=1)
 
         # Decoded objectives display
         decoded_frame = ttk.LabelFrame(frame, text="Decoded Objectives")
-        decoded_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 4))
+        decoded_frame.grid(row=0, column=0, sticky="ew", padx=6, pady=(0, 4))
         decoded_frame.columnconfigure(0, weight=1)
 
         self.decoded_objectives_text = tk.Text(decoded_frame, height=6, width=80, wrap=tk.WORD)
@@ -487,12 +481,12 @@ class ScenarioEditorApp:
         tree.column("operand", width=80, anchor=tk.W)
         tree.column("mnemonic", width=140, anchor=tk.W)
         tree.column("description", width=280, anchor=tk.W)
-        tree.grid(row=2, column=0, sticky="nsew", padx=6, pady=4)
+        tree.grid(row=1, column=0, sticky="nsew", padx=6, pady=4)
         tree.bind("<<TreeviewSelect>>", self._on_select_win_word)
         self.win_tree = tree
 
         editor = ttk.Frame(frame)
-        editor.grid(row=3, column=0, sticky="ew", padx=6, pady=4)
+        editor.grid(row=2, column=0, sticky="ew", padx=6, pady=4)
         editor.columnconfigure(3, weight=1)
         ttk.Label(editor, text="Selected #").grid(row=0, column=0, sticky="w")
         self.win_index_var = tk.StringVar(value="-")
