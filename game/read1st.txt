@@ -1,0 +1,45 @@
+5th Fleet patched and "tweaked" to version v1.2
+
+Installation:
+
+1.  Extract 5thfleet.zip with your favorite unarchiver.
+
+2.  DblClick on fleet.exe (This will extract the game into a directory called /fleet under the location that you chose).
+
+Playing the Game:
+
+This game can be played in Windows98 if you have enough Conventional memory available.  It requires aprox. 590k of conventional memory, 610k for some of the larger scenerios.  The game also requires Expanded memory.
+
+DblClick on fleet.exe
+
+If your system meets the requirements the game will start.
+
+If it doesn't, you will either have to modify your config files or you can play the game with a bootdisk.
+
+Speed:
+
+After starting the game you will see an error message -"Begin Timer Error". Just click on "OK" and the game will start. 
+
+This message appears because the game runs too fast on modern computers.  The game appears to run fine (but fast) even when this error occurs.  
+
+But you can use a slowdown program such as Moslo to eliminate the error.
+
+Sound:
+
+The game is currently set up to run with no sound.  If you wish to try to enable the sound, delete the file - Fleet.prf - from the game's directory.  The next time you start the game it will ask if you have a SoundBlaster compatible card.  Answer yes.  If the game then reboots your computer, try slowing down the game and increasing the amount of Conv. memory available the next time you try.  
+
+Depending on what Sound Card you have, you may not be able to get the sound working.
+
+Misc:
+
+The \FLEET\oldexe\unmodFleet.exe file is an unmodified copy of the games .exe file.  If there's ever another patch released, this file may or may not be needed to update.
+
+When the game starts it will ask a question.  Press the "Enter" key and the game will begin.
+
+Brought to you by The Home of the Underdogs at http://www.theunderdogs.org/
+
+
+
+
+
+

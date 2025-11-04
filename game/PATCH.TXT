@@ -1,0 +1,38 @@
+
+5th Fleet v1.2
+The following 5th Fleet bugs have been fixed in the patch.
+
+1.  Air units on bombing missions that missed their targets could not be
+    assigned to a strategic mission in the following turns air phase.
+
+2.  Missile or torpedo quantities no longer get magical boost to 255.
+
+3.  SSM and Bomb sorties from carriers are now tracked properly.
+
+4.  Teleporting task force units problem is fixed.  When saving a game or
+    playing by E-mail units formed in a task force sometimes teleported
+    to another task force.
+
+5.  Fixed random system lockup when selecting Air Missions button followed by
+    the Surface Ships button.
+
+6.  Fixed air unit names in the combat display occassionally represented
+    by an invalid string.
+
+7.  Fixed graphics glitch which superimposed large square counter over the
+    phase selection screen bottom right.
+
+8.  Fixed inaccurate missile strengths for secondary SSMs.
+
+9.  Fixed scoring for destroying enemy bases.
+
+10. Fixed screen update for strategic display when selecting first hostile unit.
+
+11. Fixed resolution of air-to-air combat over TFs defended by CAP.
+
+12. Unrelated soundfx being spliced together.
+
+13. Bombing attacks are no longer allowed during the first 8 hour turn.  This
+    prevents the unfair first strike against undefended bases advantage.
+
+

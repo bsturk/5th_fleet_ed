@@ -1,0 +1,14 @@
+REM SAMPLE AUTOEXEC.BAT FILE FOR 5TH FLEET
+
+REM Ensure that you set the path as appropriate for your configuration.
+PATH=C:\DOS;C:\MOUSE;
+
+SET PROMPT=$p$g
+LH  C:\DOS\SMARTDRV.EXE
+
+REM Ensure that you use the appropriate command for the mouse driver
+REM installed on your system.
+LH MOUSE /Y
+
+CD \FLEET
+FLEET
