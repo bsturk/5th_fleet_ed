@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - ttk is bundled with Tk in CPython.
 # Opcode decoder ring from reverse engineering
 OPCODE_MAP = {
     0x00: ("END", "Region index", "End-of-script / victory check for region"),
-    0x01: ("TURNS", "?", "TURNS opcode (actual limit at trailing_bytes[45] or 0x2d)"),
+    0x01: ("TURNS", "?", "Turn limit marker"),
     0x03: ("SCORE", "VP ref", "Victory point objective"),
     0x04: ("CONVOY_RULE", "Flags", "Convoy delivery rule flags"),
     0x05: ("SPECIAL_RULE", "Code", "Special engagement rule"),
@@ -1086,7 +1086,13 @@ class ScenarioEditorApp:
         This decodes the actual meaning based on the operand value, not just the
         generic opcode description.
         """
-        if opcode == 0x2d:  # ALT_TURNS
+        if opcode == 0x01:  # TURNS
+            if operand == 0xfe or operand == 0:
+                return "No turn limit (play until objectives complete)"
+            else:
+                return f"Turn limit marker: {operand}"
+
+        elif opcode == 0x2d:  # ALT_TURNS
             return f"Turn limit: {operand} turns"
 
         elif opcode == 0x05:  # SPECIAL_RULE
@@ -1212,9 +1218,9 @@ class ScenarioEditorApp:
             if opcode == 0x01:  # TURNS
                 found_turns_01 = True
                 if operand == 0xfe or operand == 0:
-                    lines.append("• TURNS opcode: Specifies until objectives are complete")
+                    lines.append("• No turn limit (play until objectives complete)")
                 else:
-                    lines.append(f"• TURNS opcode: Specifies {operand} turns as the time limit")
+                    lines.append(f"• Turn limit marker: {operand}")
 
             elif opcode == 0x2d:  # ALT_TURNS
                 found_alt_turns = True
