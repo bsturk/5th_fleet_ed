@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - ttk is bundled with Tk in CPython.
 # Opcode decoder ring from reverse engineering
 OPCODE_MAP = {
     0x00: ("END", "Region index", "End-of-script / victory check for region"),
-    0x01: ("TURNS", "Turn count", "Turn limit (0x0d=13, 0x0f=15, 0x00=unlimited)"),
+    0x01: ("TURNS", "?", "TURNS opcode (actual limit at trailing_bytes[45] or 0x2d)"),
     0x03: ("SCORE", "VP ref", "Victory point objective"),
     0x04: ("CONVOY_RULE", "Flags", "Convoy delivery rule flags"),
     0x05: ("SPECIAL_RULE", "Code", "0xfe=no cruise missiles, 0x06=convoy active"),
@@ -64,7 +64,7 @@ OPCODE_MAP = {
     0x18: ("CONVOY_PORT", "Port idx", "Convoy destination port"),
     0x1d: ("SHIP_OBJECTIVE", "Ship type", "Ship-specific objective"),
     0x29: ("REGION_RULE", "Region idx", "Region-based victory rule"),
-    0x2d: ("ALT_TURNS", "Turn count", "Alternate turn limit"),
+    0x2d: ("ALT_TURNS", "Turn count", "Alternate turn limit (some scenarios use this)"),
     0x3a: ("CONVOY_FALLBACK", "List ref", "Fallback port list"),
     0x3c: ("DELIVERY_CHECK", "Flags", "Delivery success/failure check"),
     0x3d: ("PORT_LIST", "List idx", "Port list (multi-destination)"),
@@ -1131,6 +1131,13 @@ class ScenarioEditorApp:
         lines.append("=" * 70)
         lines.append("")
 
+        # Extract turn count from byte offset 45 in trailing bytes (discovered 2025-01-04!)
+        turn_count_from_byte45 = None
+        if len(record.trailing_bytes) > 45:
+            turn_count_from_byte45 = record.trailing_bytes[45]
+            lines.append(f"**Turn Limit: {turn_count_from_byte45} turns** (from trailing_bytes[45])")
+            lines.append("")
+
         # Track if we find turn-related opcodes
         found_turns_01 = False
         found_alt_turns = False
@@ -1141,11 +1148,13 @@ class ScenarioEditorApp:
                 if operand == 0xfe or operand == 0:
                     lines.append("• TURNS opcode: Until objectives complete")
                 else:
-                    lines.append(f"• TURNS opcode: {operand} (NOTE: May not match player-visible turn limit)")
+                    lines.append(f"• TURNS opcode: {operand} (see actual limit above)")
 
             elif opcode == 0x2d:  # ALT_TURNS
                 found_alt_turns = True
-                lines.append(f"• Turn limit: {operand} turns (ALT_TURNS)")
+                lines.append(f"• Turn limit: {operand} turns (from ALT_TURNS opcode)")
+                if turn_count_from_byte45 and turn_count_from_byte45 != operand:
+                    lines.append(f"  ⚠ WARNING: Mismatch with trailing_bytes[45] = {turn_count_from_byte45}!")
 
             elif opcode == 0x05:  # SPECIAL_RULE
                 if operand == 0xfe:
@@ -1208,11 +1217,15 @@ class ScenarioEditorApp:
             else:
                 lines.append(f"• Unknown: opcode 0x{opcode:02x}, operand {operand}")
 
-        # Add warning if we only found TURNS(0x01) without ALT_TURNS
-        if found_turns_01 and not found_alt_turns:
+        # Add informational note about turn counts
+        if not found_alt_turns and not turn_count_from_byte45:
             lines.append("")
-            lines.append("⚠ WARNING: TURNS opcode (0x01) value may not reflect actual game turn limit.")
-            lines.append("  See documentation for details on turn count encoding discrepancies.")
+            lines.append("ℹ NOTE: Turn count not found. It may be stored at byte offset 45 in trailing_bytes")
+            lines.append("  (for scenarios with 56-byte trailing sections) or in the ALT_TURNS (0x2d) opcode.")
+        elif turn_count_from_byte45 and not found_alt_turns:
+            lines.append("")
+            lines.append("ℹ Turn count extracted from byte offset 45 in trailing_bytes. This is the")
+            lines.append("  standard storage location for scenarios. Edit this byte to change turn limit.")
 
         return "\n".join(lines)
 
