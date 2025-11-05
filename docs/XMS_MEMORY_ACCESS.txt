@@ -1,0 +1,153 @@
+═══════════════════════════════════════════════════════════════════════════
+ACCESSING XMS MEMORY IN DOSBOX-X DEBUGGER
+═══════════════════════════════════════════════════════════════════════════
+
+FINDING: Game uses XMS (Extended Memory Specification), not EMS
+
+DOS XMS output:
+  Handle Status Location    Size (bytes)
+  1      ALLOC  0x00170000  524288
+
+This is a 512KB block at linear address 0x00170000 (1.5MB - well above 1MB limit)
+
+═══════════════════════════════════════════════════════════════════════════
+OPTION 1: Linear Memory Breakpoint (Easiest to try first)
+═══════════════════════════════════════════════════════════════════════════
+
+DOSBox-X has BPLM (set linear memory breakpoint) command.
+
+We can set a breakpoint on the XMS memory to catch when it's accessed:
+
+  BPLM 170000
+
+This sets a breakpoint at linear address 0x170000 (start of XMS block).
+
+Then try accessing different offsets to find where scenario data is:
+
+  BPLM 170000
+  BPLM 171000
+  BPLM 172000
+  etc.
+
+When the breakpoint hits, you can see:
+  - What code is accessing the XMS memory
+  - The context of that access
+  - Potentially dump from the active segment at that moment
+
+═══════════════════════════════════════════════════════════════════════════
+OPTION 2: Search for XMS Access in Code
+═══════════════════════════════════════════════════════════════════════════
+
+Set breakpoint on XMS function calls:
+
+  BPINT 2F 43        (INT 2Fh, AH=43h - XMS driver)
+
+When it breaks, check AL register:
+  AL=00h = Get XMS Version
+  AL=09h = Allocate Extended Memory Block
+  AL=0Ah = Free Extended Memory Block
+  AL=0Ch = Lock Extended Memory Block (returns linear address!)
+  AL=0Dh = Unlock Extended Memory Block
+
+When you see AL=0Ch (Lock), the game is getting the linear address to access
+the XMS block. After the call returns, DX:BX contains the 32-bit linear address.
+
+═══════════════════════════════════════════════════════════════════════════
+OPTION 3: Try Dumping via Selector (if game uses protected mode)
+═══════════════════════════════════════════════════════════════════════════
+
+If the game runs in protected mode, it might create a selector (descriptor)
+that maps to the XMS memory.
+
+Check what selectors exist:
+  GDT        (Global Descriptor Table)
+  LDT        (Local Descriptor Table)
+
+Look for descriptors that point to linear address 0x00170000.
+
+If you find one (e.g., selector 0x0010), you could try:
+  MEMDUMPBIN 10:0 80000
+
+═══════════════════════════════════════════════════════════════════════════
+OPTION 4: Manual Search Using Known Pattern
+═══════════════════════════════════════════════════════════════════════════
+
+We know SCENARIO.DAT file format:
+  - Each scenario is 5883 bytes
+  - Scenario 2 starts at offset 5883 (0x16FB) in the file
+  - Objective bytes are at offset 5871 from scenario start
+  - Pattern: 0D 01 FE 0C 1D 0A
+
+If scenario data is copied verbatim to XMS:
+  XMS offset = 0x170000 + 5883 + 5871 = 0x00182DEA
+
+Try setting breakpoint there:
+  BPLM 182DEA
+
+Or try different offsets if the game doesn't load scenarios sequentially.
+
+═══════════════════════════════════════════════════════════════════════════
+RECOMMENDED APPROACH
+═══════════════════════════════════════════════════════════════════════════
+
+Try this sequence:
+
+1. Load Scenario 2, get to game map, press ALT+PAUSE
+
+2. Set breakpoint on XMS lock function:
+   BPINT 2F 43
+
+3. Continue:
+   F5
+
+4. When it breaks, check registers:
+   R
+
+5. Look for AL=0Ch (Lock XMS block)
+
+6. Step past the INT call with F10
+
+7. After return, check DX:BX for linear address:
+   R
+
+8. If DX:BX = 0x0017:0x0000, that confirms it's accessing our XMS block
+
+9. Now you know the code that accesses XMS memory - examine it:
+   U CS:IP L 50
+
+10. Set a linear breakpoint near where you expect scenario data:
+    BPLM 170000
+
+11. Or try the calculated offset:
+    BPLM 182DEA
+
+═══════════════════════════════════════════════════════════════════════════
+WHAT TO SEND ME
+═══════════════════════════════════════════════════════════════════════════
+
+If you try any of these approaches, send:
+
+1. Output when BPINT 2F 43 breakpoint hits (R command)
+2. Any linear addresses you find from Lock calls
+3. Output if BPLM breakpoint hits (CS:IP, disassembly)
+4. Any other observations
+
+═══════════════════════════════════════════════════════════════════════════
+ALTERNATIVE: PRAGMATIC APPROACH
+═══════════════════════════════════════════════════════════════════════════
+
+We've been debugging for a while. We KNOW from scenarios.md what zones
+the objectives should reference:
+
+  Scenario 3: "Gulf of Oman... or North Arabian Sea or South Arabian Sea"
+  These are zones 7, 11, 17
+
+We could:
+1. Implement lookup table mapping operands 29,35,46 -> zones [7,11,17]
+2. Get correct display working NOW
+3. Continue debugging mystery as separate investigation
+
+This gives users immediate value while we solve the algorithm puzzle.
+
+Your choice!
+═══════════════════════════════════════════════════════════════════════════
