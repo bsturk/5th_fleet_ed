@@ -9,8 +9,9 @@ import sys
 from pathlib import Path
 from typing import List, Tuple, Optional
 
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
 # Import existing parsing functions
-sys.path.insert(0, str(Path(__file__).parent))
 from editor.data import ScenarioFile, MapFile, SCENARIO_TEXT_ENCODING
 from editor.objectives import parse_objective_script, OPCODE_MAP, SPECIAL_OPERANDS
 

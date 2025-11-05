@@ -6,8 +6,7 @@ Test script to verify objective display improvements.
 import sys
 from pathlib import Path
 
-# Add editor module to path
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from editor.data import ScenarioFile
 

@@ -13,9 +13,12 @@ import argparse
 import json
 import re
 import struct
-from collections import Counter
+import sys
 from pathlib import Path
+from collections import Counter
 from typing import Dict, Iterable, List, Tuple
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from editor.data import load_template_library
 

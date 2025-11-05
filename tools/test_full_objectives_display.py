@@ -6,7 +6,7 @@ Test script to show the complete objectives display as it will appear in the edi
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from editor.data import ScenarioFile
 from editor.objectives import parse_objective_script, OPCODE_MAP, SPECIAL_OPERANDS

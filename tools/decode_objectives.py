@@ -4,10 +4,11 @@ Complete objective script decoder for 5th Fleet scenarios.
 
 Maps opcodes to their handlers and decodes victory conditions.
 """
-
-import struct
 import sys
 from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+import struct
 from collections import defaultdict
 
 from editor.objectives import (
