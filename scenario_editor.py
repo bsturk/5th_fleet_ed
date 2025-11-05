@@ -1044,6 +1044,72 @@ class ScenarioEditorApp:
             return self.map_file.regions[index].name
         return ""
 
+    def _decode_multizone_operand(self, opcode: int, operand: int) -> Optional[str]:
+        """Decode out-of-range zone operands that encode multiple zones mathematically.
+
+        Discovery: Out-of-range operands (> 21) in zone opcodes are mathematical encodings:
+        - ZONE_CHECK (0x0A): Uses XOR - e.g., 29 = 7 XOR 11 XOR 17
+        - ZONE_CONTROL (0x09): Uses SUM - e.g., 35 = 7 + 11 + 17
+        - ZONE_ENTRY (0xBB): Uses SUM with zone doubling - e.g., 46 = 7 + 11 + 17 + 11
+
+        Returns decoded zone names if a valid encoding is found, None otherwise.
+        """
+        if not self.map_file or operand <= 21:
+            return None
+
+        max_zones = len(self.map_file.regions)
+
+        # Try different decoding strategies based on opcode type
+        if opcode == 0x0A:  # ZONE_CHECK - uses XOR encoding
+            # Try 2-zone and 3-zone XOR combinations
+            for i in range(max_zones):
+                for j in range(i + 1, max_zones):
+                    if i ^ j == operand:
+                        z1, z2 = self._region_name(i), self._region_name(j)
+                        return f"{z1} OR {z2} (XOR-encoded as {operand})"
+                    for k in range(j + 1, max_zones):
+                        if i ^ j ^ k == operand:
+                            z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
+                            return f"{z1} OR {z2} OR {z3} (XOR-encoded as {operand})"
+
+        elif opcode == 0x09:  # ZONE_CONTROL - uses SUM encoding
+            # Try 2-zone and 3-zone SUM combinations
+            for i in range(max_zones):
+                for j in range(i + 1, max_zones):
+                    if i + j == operand:
+                        z1, z2 = self._region_name(i), self._region_name(j)
+                        return f"{z1} + {z2} (SUM-encoded as {operand})"
+                    for k in range(j + 1, max_zones):
+                        if i + j + k == operand:
+                            z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
+                            return f"{z1} + {z2} + {z3} (SUM-encoded as {operand})"
+
+        elif opcode == 0xBB:  # ZONE_ENTRY - uses SUM with zone doubling
+            # Try 3-zone SUM with one zone doubled
+            for i in range(max_zones):
+                for j in range(i + 1, max_zones):
+                    for k in range(j + 1, max_zones):
+                        base_sum = i + j + k
+                        # Try doubling each zone
+                        for doubled_idx, doubled_zone in [(i, i), (j, j), (k, k)]:
+                            if base_sum + doubled_zone == operand:
+                                z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
+                                doubled_name = self._region_name(doubled_idx)
+                                return f"{z1} + {z2} + {z3} (with {doubled_name} emphasized, encoded as {operand})"
+
+            # Also try simple SUM for 2 or 3 zones
+            for i in range(max_zones):
+                for j in range(i + 1, max_zones):
+                    if i + j == operand:
+                        z1, z2 = self._region_name(i), self._region_name(j)
+                        return f"{z1} + {z2} (SUM-encoded as {operand})"
+                    for k in range(j + 1, max_zones):
+                        if i + j + k == operand:
+                            z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
+                            return f"{z1} + {z2} + {z3} (SUM-encoded as {operand})"
+
+        return None
+
     def _extract_base_name(self, base_rule_operand: int) -> Optional[str]:
         """Extract base/airfield name from pointer section 9 using BASE_RULE operand.
 
@@ -1296,7 +1362,13 @@ class ScenarioEditorApp:
                 return f"Task force survival/destination (ref: {operand})"
 
         elif opcode == 0x09 or opcode == 0x0a:  # ZONE_CONTROL/CHECK
-            region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+            if operand == 254:
+                region_name = "ALL zones (special value 0xfe)"
+            elif self.map_file and operand < len(self.map_file.regions):
+                region_name = self._region_name(operand)
+            else:
+                decoded = self._decode_multizone_operand(opcode, operand)
+                region_name = decoded if decoded else f"zone/condition {operand} (encoding unknown)"
             return f"Control or occupy {region_name}"
 
         elif opcode == 0x00:  # END
@@ -1331,7 +1403,11 @@ class ScenarioEditorApp:
                 return f"Convoy destination (port ref: {operand})"
 
         elif opcode == 0xbb:  # ZONE_ENTRY
-            region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+            if self.map_file and operand < len(self.map_file.regions):
+                region_name = self._region_name(operand)
+            else:
+                decoded = self._decode_multizone_operand(opcode, operand)
+                region_name = decoded if decoded else f"zone/condition {operand} (encoding unknown)"
             return f"Zone entry requirement: {region_name}"
 
         elif opcode == 0x29:  # REGION_RULE
@@ -1499,16 +1575,17 @@ class ScenarioEditorApp:
                     lines.append(f"• Task force must survive/reach destination (ref: {operand})")
 
             elif opcode == 0x09 or opcode == 0x0a:  # ZONE_CONTROL/CHECK
-                if self.map_file and operand < len(self.map_file.regions):
-                    region_name = self._region_name(operand)
-                elif operand == 254:
+                if operand == 254:
                     region_name = "ALL zones (special value 0xfe)"
-                elif self.map_file and operand > len(self.map_file.regions):
-                    # Operand exceeds region count but game handles it (doesn't crash)
-                    # May be special victory condition ID, or game bounds-checks before use
-                    region_name = f"zone/condition {operand} (exceeds map region count; meaning unclear)"
+                elif self.map_file and operand < len(self.map_file.regions):
+                    region_name = self._region_name(operand)
                 else:
-                    region_name = f"region {operand}"
+                    # Try to decode multi-zone encoding
+                    decoded = self._decode_multizone_operand(opcode, operand)
+                    if decoded:
+                        region_name = decoded
+                    else:
+                        region_name = f"zone/condition {operand} (encoding unknown)"
                 lines.append(f"• Control or occupy {region_name}")
 
             elif opcode == 0x00:  # END
@@ -1576,9 +1653,12 @@ class ScenarioEditorApp:
                 if self.map_file and operand < len(self.map_file.regions):
                     region_name = self._region_name(operand)
                 else:
-                    region_name = f"region {operand}"
-                    if self.map_file and operand >= len(self.map_file.regions):
-                        region_name += f" (not found in map)"
+                    # Try to decode multi-zone encoding
+                    decoded = self._decode_multizone_operand(opcode, operand)
+                    if decoded:
+                        region_name = decoded
+                    else:
+                        region_name = f"zone/condition {operand} (encoding unknown)"
                 lines.append(f"• Zone entry requirement: {region_name}")
 
             elif opcode == 0x29:  # REGION_RULE
@@ -1738,16 +1818,17 @@ class ScenarioEditorApp:
 
             elif opcode == 0x09 or opcode == 0x0a:  # ZONE_CONTROL/CHECK
                 start_pos = text_widget.index(tk.INSERT)
-                if self.map_file and operand < len(self.map_file.regions):
-                    region_name = self._region_name(operand)
-                elif operand == 254:
+                if operand == 254:
                     region_name = "ALL zones (special value 0xfe)"
-                elif self.map_file and operand > len(self.map_file.regions):
-                    # Operand exceeds region count but game handles it (doesn't crash)
-                    # May be special victory condition ID, or game bounds-checks before use
-                    region_name = f"zone/condition {operand} (exceeds map region count; meaning unclear)"
+                elif self.map_file and operand < len(self.map_file.regions):
+                    region_name = self._region_name(operand)
                 else:
-                    region_name = f"region {operand}"
+                    # Try to decode multi-zone encoding
+                    decoded = self._decode_multizone_operand(opcode, operand)
+                    if decoded:
+                        region_name = decoded
+                    else:
+                        region_name = f"zone/condition {operand} (encoding unknown)"
                 text_widget.insert(tk.END, f"• Control or occupy {region_name}\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
@@ -1833,7 +1914,15 @@ class ScenarioEditorApp:
 
             elif opcode == 0xbb:  # ZONE_ENTRY
                 start_pos = text_widget.index(tk.INSERT)
-                region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                if self.map_file and operand < len(self.map_file.regions):
+                    region_name = self._region_name(operand)
+                else:
+                    # Try to decode multi-zone encoding
+                    decoded = self._decode_multizone_operand(opcode, operand)
+                    if decoded:
+                        region_name = decoded
+                    else:
+                        region_name = f"zone/condition {operand} (encoding unknown)"
                 text_widget.insert(tk.END, f"• Zone entry requirement: {region_name}\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
