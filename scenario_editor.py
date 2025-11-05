@@ -1101,6 +1101,100 @@ class ScenarioEditorApp:
 
         return None
 
+    def _extract_port_name(self, port_operand: int) -> Optional[str]:
+        """Extract port name from pointer section 9 using CONVOY_PORT/SHIP_DEST operand.
+
+        Port mapping: Tests multiple formulas as indexing may differ from BASE_RULE:
+        - Try operand - 2 (observed in Scenario 6)
+        - Try operand - 1 (BASE_RULE formula)
+        - Try operand (direct index)
+
+        Returns the first valid-looking port name found.
+        """
+        if self.map_file is None:
+            return None
+
+        # Find pointer section 9
+        pointer_section_9 = None
+        for entry in self.map_file.pointer_entries:
+            if entry.index == 9:
+                pointer_section_9 = entry
+                break
+
+        if pointer_section_9 is None:
+            return None
+
+        section_data = self.map_file.pointer_blob[pointer_section_9.start:pointer_section_9.start + pointer_section_9.count]
+
+        # Extract all strings
+        strings = []
+        i = 0
+        while i < len(section_data):
+            if section_data[i] == 0:
+                i += 1
+                continue
+            start = i
+            while i < len(section_data) and section_data[i] != 0:
+                i += 1
+            string = section_data[start:i].decode('latin1', errors='replace')
+            strings.append(string)
+            i += 1
+
+        # Try multiple formulas
+        for formula_offset in [-2, -1, 0]:
+            string_index = port_operand + formula_offset
+            if 0 <= string_index < len(strings):
+                port_name = strings[string_index]
+                # Accept if it looks like a place name (length >= 4, starts with capital)
+                if len(port_name) >= 4 and port_name[0].isupper():
+                    return port_name
+
+        return None
+
+    def _extract_convoy_ship_names(self) -> List[str]:
+        """Extract convoy ship names from MAP pointer section 14.
+
+        Searches for ships with "Fast Convoy" classification and extracts their names.
+        Returns list of ship names (e.g., ["Antares", "Capella"]).
+        """
+        if self.map_file is None:
+            return []
+
+        # Find pointer section 14 (unit names/classifications)
+        pointer_section_14 = None
+        for entry in self.map_file.pointer_entries:
+            if entry.index == 14:
+                pointer_section_14 = entry
+                break
+
+        if pointer_section_14 is None:
+            return []
+
+        data = pointer_section_14.data
+        convoy_ships = []
+
+        # Search for pattern: "ShipName\x00...\x00Fast Convoy\x00"
+        # The ship name appears shortly before "Fast Convoy" classification
+        i = 0
+        while i < len(data) - 20:
+            # Look for start of alphabetic string
+            if data[i] >= 0x41 and data[i] <= 0x7A:  # A-Z, a-z
+                start = i
+                while i < len(data) and data[i] != 0:
+                    i += 1
+                if i > start:
+                    potential_name = data[start:i].decode('latin1', errors='replace')
+                    # Look ahead for "Fast Convoy" within next 20 bytes
+                    search_end = min(len(data), i + 20)
+                    if b'Fast Convoy' in data[i:search_end]:
+                        # Filter out garbage strings (must be reasonable ship name)
+                        if len(potential_name) >= 3 and potential_name[0].isupper():
+                            convoy_ships.append(potential_name)
+            i += 1
+
+        # Return unique names only (each ship appears twice in section 14)
+        return sorted(set(convoy_ships))
+
     # ------------------------------------------------------------------#
     # Win conditions handling
     # ------------------------------------------------------------------#
@@ -1216,7 +1310,11 @@ class ScenarioEditorApp:
             return f"Victory points objective (ref: {operand})"
 
         elif opcode == 0x06:  # SHIP_DEST
-            return f"Ships must reach port (index: {operand})"
+            port_name = self._extract_port_name(operand)
+            if port_name:
+                return f"Ships must reach {port_name}"
+            else:
+                return f"Ships must reach port (index: {operand})"
 
         elif opcode == 0x0e:  # BASE_RULE
             base_name = self._extract_base_name(operand)
@@ -1226,7 +1324,11 @@ class ScenarioEditorApp:
                 return f"Airfield/base objective (base ID {operand})"
 
         elif opcode == 0x18:  # CONVOY_PORT
-            return f"Convoy destination (port ref: {operand})"
+            port_name = self._extract_port_name(operand)
+            if port_name:
+                return f"Convoy destination: {port_name}"
+            else:
+                return f"Convoy destination (port ref: {operand})"
 
         elif opcode == 0xbb:  # ZONE_ENTRY
             region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
@@ -1321,6 +1423,11 @@ class ScenarioEditorApp:
         found_alt_turns = False
         current_player = None  # Track which player's objectives we're in
 
+        # Pre-scan for convoy-related opcodes
+        has_convoy_rule = any(op == 0x05 and oper == 0x06 for op, oper in script)
+        has_convoy_port = any(op == 0x18 for op, oper in script)
+        has_ship_dest = any(op == 0x06 for op, oper in script)
+
         for opcode, operand in script:
             if opcode == 0x01:  # TURNS - player objective delimiter
                 found_turns_01 = True
@@ -1347,7 +1454,29 @@ class ScenarioEditorApp:
                 if operand == 0xfe:
                     lines.append("• Special: No cruise missile attacks allowed")
                 elif operand == 0x06:
-                    lines.append("• Special: Convoy delivery mission active")
+                    # Extract convoy ship names from MAP data
+                    convoy_ships = self._extract_convoy_ship_names()
+
+                    # Find destination if CONVOY_PORT exists
+                    convoy_port_opcode = next((o for o in script if o[0] == 0x18), None)
+                    destination = None
+                    if convoy_port_opcode:
+                        destination = self._extract_port_name(convoy_port_opcode[1])
+
+                    # Build convoy objective description
+                    if convoy_ships and destination:
+                        ship_list = ", ".join(convoy_ships)
+                        lines.append(f"• Convoy objective: {ship_list} must reach {destination}")
+                    elif convoy_ships:
+                        ship_list = ", ".join(convoy_ships)
+                        lines.append(f"• Convoy objective: {ship_list}")
+                        lines.append("    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found")
+                        lines.append("    Destination only specified in narrative text above")
+                    else:
+                        lines.append("• Special: Convoy delivery mission active")
+                        if not has_convoy_port and not has_ship_dest:
+                            lines.append("    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found")
+                            lines.append("    Destination only specified in narrative text above")
                 elif operand == 0x00:
                     lines.append("• Special: Standard engagement rules")
                 else:
@@ -1366,23 +1495,56 @@ class ScenarioEditorApp:
             elif opcode == 0x00:  # END
                 if operand > 0:
                     region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
-                    lines.append(f"• Victory check: {region_name}")
+                    lines.append(f"• Victory check region: {region_name}")
+                    lines.append("    (May be global end-game trigger, not player-specific objective)")
 
             elif opcode == 0x03:  # SCORE
-                lines.append(f"• Victory points objective (ref: {operand})")
+                # Provide generic description since VP table format is undocumented
+                vp_desc = "Destroy as many enemy units as possible"
+                lines.append(f"• Victory points: {vp_desc}")
+                lines.append(f"    (VP reference: {operand} - see narrative text for specifics)")
 
             elif opcode == 0x06:  # SHIP_DEST
-                lines.append(f"• Ships must reach port (index: {operand})")
+                port_name = self._extract_port_name(operand)
+                if port_name:
+                    lines.append(f"• Ships must reach {port_name}")
+                else:
+                    lines.append(f"• Ships must reach port (index: {operand})")
 
             elif opcode == 0x0e:  # BASE_RULE
                 base_name = self._extract_base_name(operand)
-                if base_name:
-                    lines.append(f"• Airfield/base objective: {base_name}")
+                # Add contextual hint based on player
+                if current_player == "Red":
+                    action_hint = " (likely: attack/destroy)"
+                elif current_player == "Green":
+                    action_hint = " (likely: defend)"
                 else:
-                    lines.append(f"• Airfield/base objective (base ID {operand})")
+                    action_hint = ""
+
+                if base_name:
+                    lines.append(f"• Airfield/base objective: {base_name}{action_hint}")
+                else:
+                    lines.append(f"• Airfield/base objective (base ID {operand}){action_hint}")
 
             elif opcode == 0x18:  # CONVOY_PORT
-                lines.append(f"• Convoy destination (port ref: {operand})")
+                port_name = self._extract_port_name(operand)
+                convoy_ships = self._extract_convoy_ship_names()
+
+                if convoy_ships and port_name:
+                    ship_list = ", ".join(convoy_ships)
+                    lines.append(f"• Convoy objective: {ship_list} must reach {port_name}")
+                elif convoy_ships:
+                    ship_list = ", ".join(convoy_ships)
+                    lines.append(f"• Convoy ships: {ship_list}")
+                    if port_name:
+                        lines.append(f"• Convoy destination: {port_name}")
+                    else:
+                        lines.append(f"• Convoy destination (port ref: {operand})")
+                else:
+                    if port_name:
+                        lines.append(f"• Convoy destination: {port_name}")
+                    else:
+                        lines.append(f"• Convoy destination (port ref: {operand})")
 
             elif opcode == 0xbb:  # ZONE_ENTRY
                 region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
@@ -1440,6 +1602,11 @@ class ScenarioEditorApp:
         current_player = None  # None, "Green", or "Red"
         current_bg_tag = None
 
+        # Pre-scan for convoy-related opcodes
+        has_convoy_rule = any(op == 0x05 and oper == 0x06 for op, oper in script)
+        has_convoy_port = any(op == 0x18 for op, oper in script)
+        has_ship_dest = any(op == 0x06 for op, oper in script)
+
         for opcode, operand in script:
             if opcode == 0x01:  # TURNS - player objective delimiter
                 if operand == 0x0d:
@@ -1484,7 +1651,29 @@ class ScenarioEditorApp:
                 if operand == 0xfe:
                     text_widget.insert(tk.END, "• Special: No cruise missile attacks allowed\n")
                 elif operand == 0x06:
-                    text_widget.insert(tk.END, "• Special: Convoy delivery mission active\n")
+                    # Extract convoy ship names from MAP data
+                    convoy_ships = self._extract_convoy_ship_names()
+
+                    # Find destination if CONVOY_PORT exists
+                    convoy_port_opcode = next((o for o in script if o[0] == 0x18), None)
+                    destination = None
+                    if convoy_port_opcode:
+                        destination = self._extract_port_name(convoy_port_opcode[1])
+
+                    # Build convoy objective description
+                    if convoy_ships and destination:
+                        ship_list = ", ".join(convoy_ships)
+                        text_widget.insert(tk.END, f"• Convoy objective: {ship_list} must reach {destination}\n")
+                    elif convoy_ships:
+                        ship_list = ", ".join(convoy_ships)
+                        text_widget.insert(tk.END, f"• Convoy objective: {ship_list}\n")
+                        text_widget.insert(tk.END, "    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found\n")
+                        text_widget.insert(tk.END, "    Destination only specified in narrative text above\n")
+                    else:
+                        text_widget.insert(tk.END, "• Special: Convoy delivery mission active\n")
+                        if not has_convoy_port and not has_ship_dest:
+                            text_widget.insert(tk.END, "    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found\n")
+                            text_widget.insert(tk.END, "    Destination only specified in narrative text above\n")
                 elif operand == 0x00:
                     text_widget.insert(tk.END, "• Special: Standard engagement rules\n")
                 else:
@@ -1512,35 +1701,67 @@ class ScenarioEditorApp:
                 if operand > 0:
                     start_pos = text_widget.index(tk.INSERT)
                     region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
-                    text_widget.insert(tk.END, f"• Victory check: {region_name}\n")
+                    text_widget.insert(tk.END, f"• Victory check region: {region_name}\n")
+                    text_widget.insert(tk.END, "    (May be global end-game trigger, not player-specific objective)\n")
                     if current_bg_tag:
                         text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
             elif opcode == 0x03:  # SCORE
                 start_pos = text_widget.index(tk.INSERT)
-                text_widget.insert(tk.END, f"• Victory points objective (ref: {operand})\n")
+                vp_desc = "Destroy as many enemy units as possible"
+                text_widget.insert(tk.END, f"• Victory points: {vp_desc}\n")
+                text_widget.insert(tk.END, f"    (VP reference: {operand} - see narrative text for specifics)\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
             elif opcode == 0x06:  # SHIP_DEST
                 start_pos = text_widget.index(tk.INSERT)
-                text_widget.insert(tk.END, f"• Ships must reach port (index: {operand})\n")
+                port_name = self._extract_port_name(operand)
+                if port_name:
+                    text_widget.insert(tk.END, f"• Ships must reach {port_name}\n")
+                else:
+                    text_widget.insert(tk.END, f"• Ships must reach port (index: {operand})\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
             elif opcode == 0x0e:  # BASE_RULE
                 start_pos = text_widget.index(tk.INSERT)
                 base_name = self._extract_base_name(operand)
-                if base_name:
-                    text_widget.insert(tk.END, f"• Airfield/base objective: {base_name}\n")
+                # Add contextual hint based on player
+                if current_player == "Red":
+                    action_hint = " (likely: attack/destroy)"
+                elif current_player == "Green":
+                    action_hint = " (likely: defend)"
                 else:
-                    text_widget.insert(tk.END, f"• Airfield/base objective (base ID: {operand})\n")
+                    action_hint = ""
+
+                if base_name:
+                    text_widget.insert(tk.END, f"• Airfield/base objective: {base_name}{action_hint}\n")
+                else:
+                    text_widget.insert(tk.END, f"• Airfield/base objective (base ID: {operand}){action_hint}\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
             elif opcode == 0x18:  # CONVOY_PORT
                 start_pos = text_widget.index(tk.INSERT)
-                text_widget.insert(tk.END, f"• Convoy destination (port ref: {operand})\n")
+                port_name = self._extract_port_name(operand)
+                convoy_ships = self._extract_convoy_ship_names()
+
+                if convoy_ships and port_name:
+                    ship_list = ", ".join(convoy_ships)
+                    text_widget.insert(tk.END, f"• Convoy objective: {ship_list} must reach {port_name}\n")
+                elif convoy_ships:
+                    ship_list = ", ".join(convoy_ships)
+                    text_widget.insert(tk.END, f"• Convoy ships: {ship_list}\n")
+                    if port_name:
+                        text_widget.insert(tk.END, f"• Convoy destination: {port_name}\n")
+                    else:
+                        text_widget.insert(tk.END, f"• Convoy destination (port ref: {operand})\n")
+                else:
+                    if port_name:
+                        text_widget.insert(tk.END, f"• Convoy destination: {port_name}\n")
+                    else:
+                        text_widget.insert(tk.END, f"• Convoy destination (port ref: {operand})\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
