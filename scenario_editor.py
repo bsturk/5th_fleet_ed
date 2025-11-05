@@ -1101,6 +1101,56 @@ class ScenarioEditorApp:
 
         return None
 
+    def _extract_port_name(self, port_operand: int) -> Optional[str]:
+        """Extract port name from pointer section 9 using CONVOY_PORT/SHIP_DEST operand.
+
+        Port mapping: Tests multiple formulas as indexing may differ from BASE_RULE:
+        - Try operand - 2 (observed in Scenario 6)
+        - Try operand - 1 (BASE_RULE formula)
+        - Try operand (direct index)
+
+        Returns the first valid-looking port name found.
+        """
+        if self.map_file is None:
+            return None
+
+        # Find pointer section 9
+        pointer_section_9 = None
+        for entry in self.map_file.pointer_entries:
+            if entry.index == 9:
+                pointer_section_9 = entry
+                break
+
+        if pointer_section_9 is None:
+            return None
+
+        section_data = self.map_file.pointer_blob[pointer_section_9.start:pointer_section_9.start + pointer_section_9.count]
+
+        # Extract all strings
+        strings = []
+        i = 0
+        while i < len(section_data):
+            if section_data[i] == 0:
+                i += 1
+                continue
+            start = i
+            while i < len(section_data) and section_data[i] != 0:
+                i += 1
+            string = section_data[start:i].decode('latin1', errors='replace')
+            strings.append(string)
+            i += 1
+
+        # Try multiple formulas
+        for formula_offset in [-2, -1, 0]:
+            string_index = port_operand + formula_offset
+            if 0 <= string_index < len(strings):
+                port_name = strings[string_index]
+                # Accept if it looks like a place name (length >= 4, starts with capital)
+                if len(port_name) >= 4 and port_name[0].isupper():
+                    return port_name
+
+        return None
+
     # ------------------------------------------------------------------#
     # Win conditions handling
     # ------------------------------------------------------------------#
@@ -1216,7 +1266,11 @@ class ScenarioEditorApp:
             return f"Victory points objective (ref: {operand})"
 
         elif opcode == 0x06:  # SHIP_DEST
-            return f"Ships must reach port (index: {operand})"
+            port_name = self._extract_port_name(operand)
+            if port_name:
+                return f"Ships must reach {port_name}"
+            else:
+                return f"Ships must reach port (index: {operand})"
 
         elif opcode == 0x0e:  # BASE_RULE
             base_name = self._extract_base_name(operand)
@@ -1226,7 +1280,11 @@ class ScenarioEditorApp:
                 return f"Airfield/base objective (base ID {operand})"
 
         elif opcode == 0x18:  # CONVOY_PORT
-            return f"Convoy destination (port ref: {operand})"
+            port_name = self._extract_port_name(operand)
+            if port_name:
+                return f"Convoy destination: {port_name}"
+            else:
+                return f"Convoy destination (port ref: {operand})"
 
         elif opcode == 0xbb:  # ZONE_ENTRY
             region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
@@ -1372,7 +1430,11 @@ class ScenarioEditorApp:
                 lines.append(f"• Victory points objective (ref: {operand})")
 
             elif opcode == 0x06:  # SHIP_DEST
-                lines.append(f"• Ships must reach port (index: {operand})")
+                port_name = self._extract_port_name(operand)
+                if port_name:
+                    lines.append(f"• Ships must reach {port_name}")
+                else:
+                    lines.append(f"• Ships must reach port (index: {operand})")
 
             elif opcode == 0x0e:  # BASE_RULE
                 base_name = self._extract_base_name(operand)
@@ -1382,7 +1444,11 @@ class ScenarioEditorApp:
                     lines.append(f"• Airfield/base objective (base ID {operand})")
 
             elif opcode == 0x18:  # CONVOY_PORT
-                lines.append(f"• Convoy destination (port ref: {operand})")
+                port_name = self._extract_port_name(operand)
+                if port_name:
+                    lines.append(f"• Convoy destination: {port_name}")
+                else:
+                    lines.append(f"• Convoy destination (port ref: {operand})")
 
             elif opcode == 0xbb:  # ZONE_ENTRY
                 region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
@@ -1524,7 +1590,11 @@ class ScenarioEditorApp:
 
             elif opcode == 0x06:  # SHIP_DEST
                 start_pos = text_widget.index(tk.INSERT)
-                text_widget.insert(tk.END, f"• Ships must reach port (index: {operand})\n")
+                port_name = self._extract_port_name(operand)
+                if port_name:
+                    text_widget.insert(tk.END, f"• Ships must reach {port_name}\n")
+                else:
+                    text_widget.insert(tk.END, f"• Ships must reach port (index: {operand})\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
@@ -1540,7 +1610,11 @@ class ScenarioEditorApp:
 
             elif opcode == 0x18:  # CONVOY_PORT
                 start_pos = text_widget.index(tk.INSERT)
-                text_widget.insert(tk.END, f"• Convoy destination (port ref: {operand})\n")
+                port_name = self._extract_port_name(operand)
+                if port_name:
+                    text_widget.insert(tk.END, f"• Convoy destination: {port_name}\n")
+                else:
+                    text_widget.insert(tk.END, f"• Convoy destination (port ref: {operand})\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
