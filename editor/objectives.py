@@ -88,11 +88,20 @@ def parse_objective_script(blob: bytes) -> List[Tuple[int, int]]:
         script_data = script_data[:-1]
 
     script: List[Tuple[int, int]] = []
+    consecutive_zeros = 0
     limit = min(len(script_data), MAX_SCRIPT_WORDS * 2)
     for offset in range(0, limit, 2):
         word = struct.unpack_from("<H", script_data, offset)[0]
+
+        # Count consecutive zeros - only stop after 2+ consecutive zeros
+        # This allows END(0) opcode (0x0000) to be parsed as a section separator
         if word == 0:
-            break
+            consecutive_zeros += 1
+            if consecutive_zeros >= 2:
+                break
+        else:
+            consecutive_zeros = 0
+
         opcode = (word >> 8) & 0xFF
         operand = word & 0xFF
         script.append((opcode, operand))

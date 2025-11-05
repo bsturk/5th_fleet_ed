@@ -1423,12 +1423,22 @@ class ScenarioEditorApp:
         found_alt_turns = False
         current_player = None  # Track which player's objectives we're in
 
-        # Pre-scan for convoy-related opcodes
+        # Pre-scan for convoy-related opcodes and section markers
         has_convoy_rule = any(op == 0x05 and oper == 0x06 for op, oper in script)
         has_convoy_port = any(op == 0x18 for op, oper in script)
         has_ship_dest = any(op == 0x06 for op, oper in script)
+        has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
 
-        for opcode, operand in script:
+        # Pre-scan to find END(0) as potential section separator
+        end_zero_index = None
+        for idx, (op, oper) in enumerate(script):
+            if op == 0x00 and oper == 0x00:
+                # Check if there are more opcodes after this END(0)
+                if idx + 1 < len(script):
+                    end_zero_index = idx
+                break
+
+        for idx, (opcode, operand) in enumerate(script):
             if opcode == 0x01:  # TURNS - player objective delimiter
                 found_turns_01 = True
                 if operand == 0x0d:
@@ -1489,11 +1499,23 @@ class ScenarioEditorApp:
                     lines.append(f"• Task force must survive/reach destination (ref: {operand})")
 
             elif opcode == 0x09 or opcode == 0x0a:  # ZONE_CONTROL/CHECK
-                region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                if self.map_file and operand < len(self.map_file.regions):
+                    region_name = self._region_name(operand)
+                else:
+                    region_name = f"region {operand}"
+                    if self.map_file and operand >= len(self.map_file.regions):
+                        region_name += f" (not found in map - max region index is {len(self.map_file.regions)-1})"
                 lines.append(f"• Control or occupy {region_name}")
 
             elif opcode == 0x00:  # END
-                if operand > 0:
+                if operand == 0 and end_zero_index is not None and idx == end_zero_index:
+                    # END(0) with more opcodes after it - treat as Red Player section separator
+                    if not has_explicit_red_marker and current_player == "Green":
+                        lines.append("")
+                        lines.append("═══ RED PLAYER OBJECTIVES ═══")
+                        current_player = "Red"
+                    # Don't display END(0) as a victory check when it's a section separator
+                elif operand > 0:
                     region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
                     lines.append(f"• Victory check region: {region_name}")
                     lines.append("    (May be global end-game trigger, not player-specific objective)")
@@ -1547,11 +1569,21 @@ class ScenarioEditorApp:
                         lines.append(f"• Convoy destination (port ref: {operand})")
 
             elif opcode == 0xbb:  # ZONE_ENTRY
-                region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                if self.map_file and operand < len(self.map_file.regions):
+                    region_name = self._region_name(operand)
+                else:
+                    region_name = f"region {operand}"
+                    if self.map_file and operand >= len(self.map_file.regions):
+                        region_name += f" (not found in map)"
                 lines.append(f"• Zone entry requirement: {region_name}")
 
             elif opcode == 0x29:  # REGION_RULE
-                region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                if self.map_file and operand < len(self.map_file.regions):
+                    region_name = self._region_name(operand)
+                else:
+                    region_name = f"region {operand}"
+                    if self.map_file and operand >= len(self.map_file.regions):
+                        region_name += f" (not found in map)"
                 lines.append(f"• Region-based victory rule: {region_name}")
 
             elif opcode == 0x3a:  # CONVOY_FALLBACK
@@ -1602,12 +1634,22 @@ class ScenarioEditorApp:
         current_player = None  # None, "Green", or "Red"
         current_bg_tag = None
 
-        # Pre-scan for convoy-related opcodes
+        # Pre-scan for convoy-related opcodes and section markers
         has_convoy_rule = any(op == 0x05 and oper == 0x06 for op, oper in script)
         has_convoy_port = any(op == 0x18 for op, oper in script)
         has_ship_dest = any(op == 0x06 for op, oper in script)
+        has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
 
-        for opcode, operand in script:
+        # Pre-scan to find END(0) as potential section separator
+        end_zero_index = None
+        for idx, (op, oper) in enumerate(script):
+            if op == 0x00 and oper == 0x00:
+                # Check if there are more opcodes after this END(0)
+                if idx + 1 < len(script):
+                    end_zero_index = idx
+                break
+
+        for idx, (opcode, operand) in enumerate(script):
             if opcode == 0x01:  # TURNS - player objective delimiter
                 if operand == 0x0d:
                     # Green player section
@@ -1692,13 +1734,29 @@ class ScenarioEditorApp:
 
             elif opcode == 0x09 or opcode == 0x0a:  # ZONE_CONTROL/CHECK
                 start_pos = text_widget.index(tk.INSERT)
-                region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                if self.map_file and operand < len(self.map_file.regions):
+                    region_name = self._region_name(operand)
+                else:
+                    region_name = f"region {operand}"
+                    if self.map_file and operand >= len(self.map_file.regions):
+                        region_name += f" (not found in map - max region index is {len(self.map_file.regions)-1})"
                 text_widget.insert(tk.END, f"• Control or occupy {region_name}\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
             elif opcode == 0x00:  # END
-                if operand > 0:
+                if operand == 0 and end_zero_index is not None and idx == end_zero_index:
+                    # END(0) with more opcodes after it - treat as Red Player section separator
+                    if not has_explicit_red_marker and current_player == "Green":
+                        current_player = "Red"
+                        current_bg_tag = "red_bg"
+                        text_widget.insert(tk.END, "\n")
+                        start_pos = text_widget.index(tk.INSERT)
+                        text_widget.insert(tk.END, "═══ RED PLAYER OBJECTIVES ═══\n")
+                        end_pos = text_widget.index(tk.INSERT)
+                        text_widget.tag_add("red_header", start_pos, end_pos)
+                    # Don't display END(0) as a victory check when it's a section separator
+                elif operand > 0:
                     start_pos = text_widget.index(tk.INSERT)
                     region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
                     text_widget.insert(tk.END, f"• Victory check region: {region_name}\n")
