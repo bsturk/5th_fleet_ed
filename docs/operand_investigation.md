@@ -217,3 +217,45 @@ else zones = {operand};  // normal case
 ```
 
 The primary objective parsing fix (recognizing END(0) as a section separator) is complete and correct. The "out-of-range" operands are not errors—they're special-cased multi-zone objectives for the Arabian Sea strategic area.
+
+## Addendum: Objective Hexes Discovery
+
+### The "Missing" Port Destinations Mystery
+
+Further investigation revealed an apparent discrepancy in Scenario 2 ("Russian Raiders"):
+- **Narrative text**: "The four Russian surface warships must reach Aden, Al Mukalla, or Ras Karma"
+- **Scenario objective script**: Only contains `CONVOY_RULE(5)` and `SCORE(51)` - NO explicit `SHIP_DEST` opcodes!
+
+This raised the question: Where are the port destinations encoded?
+
+### Discovery: Objective Hexes in Map Files
+
+The answer: **Objective destinations are marked in the MAP files, not the scenario files!**
+
+Analysis of **RAIDERS.DAT** (Scenario 2's map file) revealed that each port structure contains a SHIP_DEST marker:
+
+**Objective Ports** (marked with `fb 06` = SHIP_DEST(251)):
+- Aden at offset 0x093c
+- Al Mukalla at offset 0x09c8
+- Ras Karma at offset 0x0a54
+
+**Non-Objective Ports** (marked with `00 06` = SHIP_DEST(0)):
+- Diego Garcia, Raysut, and other ports
+
+The value 251 (0xfb) appears to be a special flag indicating "this port is an objective destination" - exactly matching the game manual's description of "objective hexes" with special designations.
+
+### How It Works
+
+Scenario 2's objective system:
+1. **CONVOY_RULE(5)**: Enables convoy/ship destination checking for Red player
+2. **SCORE(51)**: Victory requires 51 points
+3. **Map file markers**: SHIP_DEST(251) flags in RAIDERS.DAT identify which ports award victory points
+
+The game engine reads both the scenario objectives AND the map file port markers to determine valid destinations. This data-driven design allows the same map to be used with different scenarios, each potentially having different objective ports.
+
+### Implications for Editor
+
+The scenario editor should:
+1. Read map file port data to identify objective ports (SHIP_DEST(251) markers)
+2. Display "Ships must reach [list of objective ports]" when CONVOY_RULE or similar opcodes are present
+3. Cross-reference scenario objectives with map data for complete objective descriptions
