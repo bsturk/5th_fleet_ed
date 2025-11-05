@@ -58,7 +58,7 @@ OPCODE_MAP = {
     0x09: ("ZONE_CONTROL", "Zone idx", "Zone must be controlled/occupied"),
     0x0a: ("ZONE_CHECK", "Zone idx", "Check zone status"),
     0x0c: ("TASK_FORCE", "TF ref", "Task force objective"),
-    0x0e: ("BASE_RULE", "Base ID", "Airfield/base objective (operand indexes pointer section 9 strings)"),
+    0x0e: ("BASE_RULE", "Base ID", "Airfield/base objective"),
     0x0f: ("UNKNOWN_0F", "?", "Unknown"),
     0x13: ("PORT_RESTRICT", "Flags", "Replenishment port restrictions"),
     0x18: ("CONVOY_PORT", "Port idx", "Convoy destination port"),
