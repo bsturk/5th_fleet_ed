@@ -1296,6 +1296,19 @@ class ScenarioEditorApp:
 
         lines = []
 
+        # Add descriptive objectives text from SCENARIO.DAT first
+        if record.objectives and record.objectives.strip():
+            lines.append("═══════════════════════════════════════════════════")
+            lines.append("SCENARIO OBJECTIVES (Descriptive Text)")
+            lines.append("═══════════════════════════════════════════════════")
+            lines.append("")
+            lines.append(record.objectives.strip())
+            lines.append("")
+            lines.append("═══════════════════════════════════════════════════")
+            lines.append("BINARY OPCODE IMPLEMENTATION")
+            lines.append("═══════════════════════════════════════════════════")
+            lines.append("")
+
         # Extract turn count from byte offset 45 in trailing bytes
         turn_count_from_byte45 = None
         if len(record.trailing_bytes) > 45:
@@ -1407,6 +1420,16 @@ class ScenarioEditorApp:
             text_widget.config(state=tk.DISABLED)
             return
 
+        # Add descriptive objectives text from SCENARIO.DAT first
+        if record.objectives and record.objectives.strip():
+            text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n")
+            text_widget.insert(tk.END, "SCENARIO OBJECTIVES (Descriptive Text)\n")
+            text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n\n")
+            text_widget.insert(tk.END, record.objectives.strip() + "\n\n")
+            text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n")
+            text_widget.insert(tk.END, "BINARY OPCODE IMPLEMENTATION\n")
+            text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n\n")
+
         # Extract turn count from byte offset 45 in trailing bytes
         turn_count_from_byte45 = None
         if len(record.trailing_bytes) > 45:
@@ -1507,8 +1530,11 @@ class ScenarioEditorApp:
 
             elif opcode == 0x0e:  # BASE_RULE
                 start_pos = text_widget.index(tk.INSERT)
-                # Note: operand is a base/airfield ID, not a direct region index
-                text_widget.insert(tk.END, f"• Airfield/base objective (base ID: {operand})\n")
+                base_name = self._extract_base_name(operand)
+                if base_name:
+                    text_widget.insert(tk.END, f"• Airfield/base objective: {base_name}\n")
+                else:
+                    text_widget.insert(tk.END, f"• Airfield/base objective (base ID: {operand})\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
