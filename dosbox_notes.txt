@@ -1,0 +1,72 @@
+DOSBOX-STAGING
+
+	Uses standard DosBox options and has more commands like MEMDUMP
+
+DOSBOX-X
+
+	To run with debugger add to command line
+
+		-console -break-start
+
+	F5 -> Run
+	F9 -> Toggle Breakpoint at cursor
+	F10 -> Step over
+	F11 -> Step into
+	(in game) Alt-Pause -> Break
+
+	Debugger commands (enter all values in hex or as register):                     
+	Commands------------------------------------------------                        
+	BP     [segment]:[offset] - Set breakpoint.                                     
+	BPINT  [intNr] *          - Set interrupt breakpoint.                           
+	BPINT  [intNr] [ah] *     - Set interrupt breakpoint with ah.                   
+	BPINT  [intNr] [ah] [al]  - Set interrupt breakpoint with ah and al.            
+	BPM    [segment]:[offset] - Set memory breakpoint (memory change).              
+	BPPM   [selector]:[offset]- Set pmode-memory breakpoint (memory change).        
+	BPLM   [linear address]   - Set linear memory breakpoint (memory change).       
+	BPLIST                    - List breakpoints.
+	BPDEL  [bpNr] / *         - Delete breakpoint nr / all.                         
+	C / D  [segment]:[offset] - Set code / data view address.                       
+	DOS MCBS                  - Show Memory Control Block chain.                    
+	DOS KERN                  - Show DOS kernel memory blocks.                      
+	DOS XMS                   - Show XMS memory handles.                            
+	DOS EMS                   - Show EMS memory handles.                            
+	DOS FNKEY                 - Show PC-98 FnKey mapping.                           
+	BIOS MEM                  - Show BIOS memory blocks.                            
+	CALLBACKS                 - Show callbacks of interrupts.                       
+	INT [nr] / INTT [nr]      - Execute / Trace into interrupt.
+	LOG [num]                 - Write CPU log file.                                 
+	LOGS/LOGL/LOGC [num]      - Write short/long/cs:ip-only CPU log file.           
+	HEAVYLOG                  - Enable/Disable automatic CPU log when DOSBox-X ex...
+	ZEROPROTECT               - Enable/Disable zero code execution detection.       
+	ADDLOG [message]          - Add message to the log file.                        
+	SR [reg] [value]          - Set register value. Multiple pairs allowed.         
+	SM [seg]:[off] [val] [.]..- Set memory with following values.                   
+	EV [value [value] ...]    - Show register value(s).                             
+	IV [seg]:[off] [name]     - Create var name for memory address.                 
+	SV [filename]             - Save var list in file.
+	LV [filename]             - Load var list from file.                            
+	VGA cmd                   - VGA related debugging commands.                     
+	PC98 cmd                  - PC98 related debugging commands.                    
+	EMU MEM/MACHINE           - Show emulator memory or machine info.               
+	MEMDUMP [seg]:[off] [len] - Write memory to file memdump.txt.                   
+	MEMDUMPBIN [s]:[o] [len]  - Write memory to file memdump.bin.                   
+	SELINFO [segName]         - Show selector info.                                 
+	INTVEC [filename]         - Writes interrupt vector table to file.              
+	INTHAND [intNum]          - Set code view to interrupt handler.                 
+	MMX [=t] [reg]            - Display MMX register file (t can be B,W,D,Q)
+	MMX [=t] [reg] SET [val]  - Set MMX register (t can be B,W,D,Q), val is comma...
+	SSE [=t] [reg]            - Display SSE register file (t can be B,W,D,Q,X,S,F)  
+	SSE [=t] [reg] SET [val]  - Set SSE register (t can be B,W,D,Q,X,S,F), val is...
+	CPU                       - Display CPU status information.                     
+	FPU                       - Display FPU status information.                     
+	GDT                       - Lists descriptors of the GDT.                       
+	LDT                       - Lists descriptors of the LDT.                       
+	IDT                       - Lists descriptors of the IDT.                       
+	PAGING [page]             - Display content of page table.                      
+	EXTEND                    - Toggle additional info.
+	TIMERIRQ                  - Run the system timer.                               
+	TIME [time]               - Display or change the internal time.                
+	DATE [date]               - Display or change the internal date.                
+	IN[P|W|D] [port]          - I/O port read byte/word/dword.                      
+	OUT[P|W|D] [port] [data]  - I/O port write byte/word/dword.                     
+	HELP                      - Help
