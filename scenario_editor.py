@@ -1045,68 +1045,44 @@ class ScenarioEditorApp:
         return ""
 
     def _decode_multizone_operand(self, opcode: int, operand: int) -> Optional[str]:
-        """Decode out-of-range zone operands that encode multiple zones mathematically.
+        """Decode out-of-range zone operands that encode multiple zones.
 
-        Discovery: Out-of-range operands (> 21) in zone opcodes are mathematical encodings:
-        - ZONE_CHECK (0x0A): Uses XOR - e.g., 29 = 7 XOR 11 XOR 17
-        - ZONE_CONTROL (0x09): Uses SUM - e.g., 35 = 7 + 11 + 17
-        - ZONE_ENTRY (0xBB): Uses SUM with zone doubling - e.g., 46 = 7 + 11 + 17 + 11
+        Discovery: Through exhaustive analysis of all 24 scenarios and the disassembly,
+        there are exactly THREE out-of-range zone operands in the entire game:
+        - Scenario 2: ZONE_CHECK(29)
+        - Scenario 3: ZONE_CONTROL(35) and ZONE_ENTRY(46)
 
-        Returns decoded zone names if a valid encoding is found, None otherwise.
+        All three map to the same strategic zone cluster: Gulf of Oman (7),
+        North Arabian Sea (11), and South Arabian Sea (17).
+
+        The different encodings (29 = 7⊕11⊕17, 35 = 7+11+17, 46 = 7+11+17+11)
+        suggest mathematical patterns, but analysis shows these are hardcoded
+        special cases in the game, not a general algorithm.
+
+        Returns decoded zone names if operand is one of these known cases.
         """
         if not self.map_file or operand <= 21:
             return None
 
-        max_zones = len(self.map_file.regions)
+        # Hardcoded lookup for the only 3 out-of-range operands in the game
+        # All map to the Arabian Sea strategic zone cluster
+        MULTIZONE_LOOKUP = {
+            (0x0A, 29): (7, 11, 17),  # ZONE_CHECK - Scenario 2
+            (0x09, 35): (7, 11, 17),  # ZONE_CONTROL - Scenario 3
+            (0xBB, 46): (7, 11, 17),  # ZONE_ENTRY - Scenario 3
+        }
 
-        # Try different decoding strategies based on opcode type
-        if opcode == 0x0A:  # ZONE_CHECK - uses XOR encoding
-            # Try 2-zone and 3-zone XOR combinations
-            for i in range(max_zones):
-                for j in range(i + 1, max_zones):
-                    if i ^ j == operand:
-                        z1, z2 = self._region_name(i), self._region_name(j)
-                        return f"{z1} OR {z2}"
-                    for k in range(j + 1, max_zones):
-                        if i ^ j ^ k == operand:
-                            z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
-                            return f"{z1} OR {z2} OR {z3}"
+        zones = MULTIZONE_LOOKUP.get((opcode, operand))
+        if zones:
+            zone_names = [self._region_name(z) for z in zones]
 
-        elif opcode == 0x09:  # ZONE_CONTROL - uses SUM encoding
-            # Try 2-zone and 3-zone SUM combinations
-            for i in range(max_zones):
-                for j in range(i + 1, max_zones):
-                    if i + j == operand:
-                        z1, z2 = self._region_name(i), self._region_name(j)
-                        return f"{z1} AND {z2}"
-                    for k in range(j + 1, max_zones):
-                        if i + j + k == operand:
-                            z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
-                            return f"{z1} AND {z2} AND {z3}"
-
-        elif opcode == 0xBB:  # ZONE_ENTRY - uses SUM with zone doubling
-            # Try 3-zone SUM with one zone doubled
-            for i in range(max_zones):
-                for j in range(i + 1, max_zones):
-                    for k in range(j + 1, max_zones):
-                        base_sum = i + j + k
-                        # Try doubling each zone
-                        for doubled_idx, doubled_zone in [(i, i), (j, j), (k, k)]:
-                            if base_sum + doubled_zone == operand:
-                                z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
-                                doubled_name = self._region_name(doubled_idx)
-                                return f"{z1}, {z2}, {z3} (emphasizing {doubled_name})"
-
-            # Also try simple SUM for 2 or 3 zones
-            for i in range(max_zones):
-                for j in range(i + 1, max_zones):
-                    if i + j == operand:
-                        z1, z2 = self._region_name(i), self._region_name(j)
-                        return f"{z1} AND {z2}"
-                    for k in range(j + 1, max_zones):
-                        if i + j + k == operand:
-                            z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
-                            return f"{z1} AND {z2} AND {z3}"
+            # Different opcodes imply different logical relationships
+            if opcode == 0x0A:  # ZONE_CHECK - checking presence/entry
+                return f"{zone_names[0]} OR {zone_names[1]} OR {zone_names[2]}"
+            elif opcode == 0x09:  # ZONE_CONTROL - checking occupation
+                return f"{zone_names[0]} AND {zone_names[1]} AND {zone_names[2]}"
+            elif opcode == 0xBB:  # ZONE_ENTRY - checking entry requirement
+                return f"{zone_names[0]}, {zone_names[1]}, {zone_names[2]}"
 
         return None
 
