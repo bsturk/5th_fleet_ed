@@ -1066,11 +1066,11 @@ class ScenarioEditorApp:
                 for j in range(i + 1, max_zones):
                     if i ^ j == operand:
                         z1, z2 = self._region_name(i), self._region_name(j)
-                        return f"{z1} OR {z2} (XOR-encoded as {operand})"
+                        return f"{z1} OR {z2}"
                     for k in range(j + 1, max_zones):
                         if i ^ j ^ k == operand:
                             z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
-                            return f"{z1} OR {z2} OR {z3} (XOR-encoded as {operand})"
+                            return f"{z1} OR {z2} OR {z3}"
 
         elif opcode == 0x09:  # ZONE_CONTROL - uses SUM encoding
             # Try 2-zone and 3-zone SUM combinations
@@ -1078,11 +1078,11 @@ class ScenarioEditorApp:
                 for j in range(i + 1, max_zones):
                     if i + j == operand:
                         z1, z2 = self._region_name(i), self._region_name(j)
-                        return f"{z1} + {z2} (SUM-encoded as {operand})"
+                        return f"{z1} AND {z2}"
                     for k in range(j + 1, max_zones):
                         if i + j + k == operand:
                             z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
-                            return f"{z1} + {z2} + {z3} (SUM-encoded as {operand})"
+                            return f"{z1} AND {z2} AND {z3}"
 
         elif opcode == 0xBB:  # ZONE_ENTRY - uses SUM with zone doubling
             # Try 3-zone SUM with one zone doubled
@@ -1095,18 +1095,18 @@ class ScenarioEditorApp:
                             if base_sum + doubled_zone == operand:
                                 z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
                                 doubled_name = self._region_name(doubled_idx)
-                                return f"{z1} + {z2} + {z3} (with {doubled_name} emphasized, encoded as {operand})"
+                                return f"{z1}, {z2}, {z3} (emphasizing {doubled_name})"
 
             # Also try simple SUM for 2 or 3 zones
             for i in range(max_zones):
                 for j in range(i + 1, max_zones):
                     if i + j == operand:
                         z1, z2 = self._region_name(i), self._region_name(j)
-                        return f"{z1} + {z2} (SUM-encoded as {operand})"
+                        return f"{z1} AND {z2}"
                     for k in range(j + 1, max_zones):
                         if i + j + k == operand:
                             z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
-                            return f"{z1} + {z2} + {z3} (SUM-encoded as {operand})"
+                            return f"{z1} AND {z2} AND {z3}"
 
         return None
 
