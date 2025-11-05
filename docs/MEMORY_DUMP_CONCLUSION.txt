@@ -1,0 +1,108 @@
+═══════════════════════════════════════════════════════════════════════════
+MEMORY DUMP INVESTIGATION - CONCLUSION
+═══════════════════════════════════════════════════════════════════════════
+
+FINDING: Memory dumps do not contain scenario data
+
+EVIDENCE:
+- Both memdump_at_scenario_screen.bin and scenario_2_started.bin are exactly
+  1,048,575 bytes (0xFFFFF = 1MB - 1 byte)
+- No scenario text found: "Russian Raiders", "Raiders", "FORCES", etc.
+- No objective opcode pattern found: "0D 01 FE 0C 1D 0A"
+- The byte pattern DOES exist in game/SCENARIO.DAT at offset 0x2DEA
+
+ROOT CAUSE:
+DOSBox MEMDUMP command only captures conventional DOS memory (first 1MB).
+The game loads scenario data into extended/expanded memory (EMS/XMS) above 1MB,
+which is not captured by the dump.
+
+WHY GAME USES EXTENDED MEMORY:
+- DOS conventional memory is limited to 640KB usable
+- Large scenario data, maps, graphics need more space
+- Game likely uses DOS extender or memory managers (EMS/XMS drivers)
+- MEMDUMP can't access these memory areas
+
+IMPLICATIONS:
+1. Cannot use memory breakpoints on scenario data (address unknown)
+2. Cannot search memory dumps to find where data is loaded
+3. Memory-based debugging approaches won't work for this data
+
+═══════════════════════════════════════════════════════════════════════════
+ALTERNATIVE APPROACHES
+═══════════════════════════════════════════════════════════════════════════
+
+OPTION 1: Lookup Table (Recommended)
+Use scenarios.md to manually map operands to zones for the 3 known cases.
+
+Pros:
+- Simple, reliable
+- Based on authoritative source (scenarios.md)
+- Works immediately
+
+Cons:
+- Doesn't reveal the actual game algorithm
+- Only works for known scenarios
+
+OPTION 2: Disassembly Analysis
+Manually trace through disasm.txt to find objective processing code.
+
+The function sub_6C2A7 in overlay 140 processes objectives.
+Could manually trace the assembly to see how it decodes operands.
+
+Pros:
+- Would reveal true algorithm
+- Would work for all scenarios
+
+Cons:
+- Very time-consuming
+- Requires deep x86 assembly knowledge
+- Overlays make it complex
+
+OPTION 3: Real-mode Debugger with EMS Support
+Use a debugger that can access extended memory.
+
+Tools:
+- Turbo Debugger (TD.EXE) - can debug protected mode
+- SYMDEB with EMS - if available
+- DOSBox-X debug mode with EMS enabled
+
+This would require:
+- Configuring DOSBox to emulate EMS properly
+- Using debugger that understands EMS memory access
+- Much more complex setup
+
+═══════════════════════════════════════════════════════════════════════════
+MYSTERY: ZONE_CHECK(29) in Scenario 2
+═══════════════════════════════════════════════════════════════════════════
+
+PROBLEM:
+Scenario 2 binary has ZONE_CHECK(29) opcode, but scenarios.md shows:
+- Green objective: "Destroy as many Russian units as possible" (not zone-based)
+- Red objective: "Must reach Aden, Al Mukalla, or Ras Karma" (ports, not zones)
+
+Neither objective mentions zones!
+
+POSSIBILITIES:
+1. Hidden/automatic victory condition not documented in scenarios.md
+2. Check for "avoid these zones" or similar restriction
+3. Error in scenario file (unused opcode)
+4. Scenarios.md description incomplete
+
+RECOMMENDATION:
+Until we can definitively decode operand 29, use lookup table approach with
+zones [7, 11, 17] based on Scenario 3's similar multi-zone objective.
+
+═══════════════════════════════════════════════════════════════════════════
+RECOMMENDED NEXT STEP
+═══════════════════════════════════════════════════════════════════════════
+
+Implement lookup table in scenario_editor.py for the 3 known multi-zone
+operands:
+- (0x0A, 29): zones [7, 11, 17]  # Best guess, needs verification
+- (0x09, 35): zones [7, 11, 17]  # Confirmed from scenarios.md Scenario 3
+- (0xBB, 46): zones [7, 11, 17]  # Confirmed from scenarios.md Scenario 3
+
+This gives correct display for users while we continue investigating the
+true algorithm.
+
+═══════════════════════════════════════════════════════════════════════════
