@@ -1,0 +1,178 @@
+╔══════════════════════════════════════════════════════════════╗
+║  DOSBOX DEBUGGER CHEAT SHEET - Finding Operand 29 Meaning   ║
+╚══════════════════════════════════════════════════════════════╝
+
+┌────────────────────────────────────────────────────────────┐
+│ STEP 1: START DEBUGGER                                      │
+└────────────────────────────────────────────────────────────┘
+Command: dosbox -debug
+
+You'll see TWO windows open.
+
+
+┌────────────────────────────────────────────────────────────┐
+│ STEP 2: MOUNT AND RUN GAME                                  │
+└────────────────────────────────────────────────────────────┘
+In main DOSBox window:
+  mount c game
+  c:
+  fleet
+
+Navigate to scenario selection screen, then PAUSE.
+
+
+┌────────────────────────────────────────────────────────────┐
+│ STEP 3: FIND SCENARIO 2 DATA                                │
+└────────────────────────────────────────────────────────────┘
+In debugger window, type:
+
+  SEARCH 0 FFFFF 0D 01 FE 0C 1D 0A
+
+You'll get: "Found at: XXXX:YYYY"
+
+WRITE DOWN THIS ADDRESS!
+
+
+┌────────────────────────────────────────────────────────────┐
+│ STEP 4: VERIFY YOU FOUND IT                                 │
+└────────────────────────────────────────────────────────────┘
+Type: D XXXX:YYYY
+
+Should see:
+  XXXX:YYYY  0D 01 FE 0C 1D 0A 00 00 05 04 33 03 00 0E ...
+             ^^ ^^ ^^ ^^ ^^ ^^
+             GREEN MARKER
+                  TASK_FORCE(254)
+                       ZONE_CHECK(29) <- This is what we want!
+
+
+┌────────────────────────────────────────────────────────────┐
+│ STEP 5: SET BREAKPOINT ON THE 1D BYTE                       │
+└────────────────────────────────────────────────────────────┘
+The byte 1D (29) is at position XXXX:YYYY+4
+
+Calculate: If found at 2E34:0120, then 1D is at 2E34:0124
+                                                    ^^^^
+                                                    +4 in hex
+
+Type: BPMR XXXX:YYYY+4
+
+Example: BPMR 2E34:0124
+
+
+┌────────────────────────────────────────────────────────────┐
+│ STEP 6: START SCENARIO 2                                    │
+└────────────────────────────────────────────────────────────┘
+Back in main window, select Scenario 2 and click START.
+
+Game will freeze when it reads that byte!
+Debugger window will show WHERE it's reading from.
+
+
+┌────────────────────────────────────────────────────────────┐
+│ STEP 7: EXAMINE THE CODE                                    │
+└────────────────────────────────────────────────────────────┘
+Look at the debugger screen. You'll see something like:
+
+  CS:IP = 0070:1234
+  0070:1234  MOV AL, [SI+04]    <- Reading our byte!
+
+  Registers:
+  AX = 0000    SI = 0120
+  BX = 0000    DI = 0000
+
+Press F10 to step. Watch AX register!
+
+
+┌────────────────────────────────────────────────────────────┐
+│ WHAT TO LOOK FOR (Press F10 repeatedly)                     │
+└────────────────────────────────────────────────────────────┘
+
+PATTERN 1: Bounds check
+  MOV AL, [SI+04]    ; AL = 1D (29)
+  CMP AL, 16h        ; Compare to 22?
+  JBE normal_path    ; Jump if <= 22
+  ; ... special code here ...
+
+PATTERN 2: Arithmetic transformation
+  MOV AL, [SI+04]    ; AL = 1D (29)
+  SUB AL, 16h        ; AL = 07 (29-22=7) !!!
+  ; Now it's using 7 for something!
+
+PATTERN 3: Lookup table
+  MOV AL, [SI+04]    ; AL = 1D (29)
+  MOV BX, AX         ; BX = 1D
+  SHL BX, 1          ; BX = 3A (multiply by 2)
+  MOV AX, [table+BX] ; Look up entry 29
+
+PATTERN 4: Ignored
+  MOV AL, [SI+04]    ; AL = 1D (29)
+  ; ... no further use of AL ...
+
+
+┌────────────────────────────────────────────────────────────┐
+│ WRITE DOWN THESE THINGS:                                    │
+└────────────────────────────────────────────────────────────┘
+
+1. Memory address where found: __________________
+
+2. Next 5-10 instructions after reading 1D:
+
+   ________________  ___________________________
+   ________________  ___________________________
+   ________________  ___________________________
+   ________________  ___________________________
+   ________________  ___________________________
+
+3. Any CMP (compare) with the value? Y / N
+   If yes, comparing to what? __________________
+
+4. Any SUB/ADD with the value? Y / N
+   If yes, what math? __________________
+
+5. Final value after transformations: __________________
+
+
+┌────────────────────────────────────────────────────────────┐
+│ DEBUGGER COMMAND REFERENCE                                  │
+└────────────────────────────────────────────────────────────┘
+
+SEARCH start end bytes   Find bytes in memory
+D segment:offset         Display memory
+BPMR segment:offset      Break when reading memory
+F10                      Step one instruction (OVER calls)
+F11                      Step one instruction (INTO calls)
+R                        Show all registers
+G                        Continue running
+Q                        Quit debugger
+
+Tip: Use UP ARROW to repeat last command!
+
+
+┌────────────────────────────────────────────────────────────┐
+│ IF GAME DOESN'T BREAK:                                      │
+└────────────────────────────────────────────────────────────┘
+
+Try:
+1. Play scenario 2 for a few turns
+2. Wait until turn end
+3. Objectives might only be checked at victory/defeat
+
+Alternative: Set breakpoint on victory check
+  BP 6C2A7
+  (from disassembly - objective handler)
+
+
+┌────────────────────────────────────────────────────────────┐
+│ EXPECTED REVELATION:                                        │
+└────────────────────────────────────────────────────────────┘
+
+We should see HOW the game interprets operand 29!
+
+Most likely:
+  • 29 = 7 + 22 (adding offset to get region 7?)
+  • 29 = special condition ID (not a region at all)
+  • 29 = port index in different numbering system
+  • 29 = ignored/unused
+
+Whatever we find will be THE ANSWER! 🎯
