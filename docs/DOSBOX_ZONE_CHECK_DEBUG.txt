@@ -35,23 +35,23 @@ STEP 3: Set memory breakpoint on operand 29 being read
 The operand 29 (0x1D) is at file offset 0x2DEE in SCENARIO.DAT.
 When loaded into memory, we need to find where it is.
 
-Option A: Break when SCENARIO.DAT is read
-  BP 3:7C00  (DOS read file interrupt)
+Option A: Use MEMDUMP to find the pattern
+  After selecting Scenario 2 in game, break and dump memory:
+  MEMDUMP memory.bin
 
-Option B: Search memory for the opcode pattern after loading scenario
-  After selecting Scenario 2 in game, break and search:
-  SEARCH 0:0 L FFFFF 0D 01 FE 0C 1D 0A
+  Then search the file manually for the byte pattern:
+    0D 01 FE 0C 1D 0A
 
-  This searches for the byte pattern:
+  Where:
     0D 01    = TURNS(13)
     FE 0C    = TASK_FORCE(254)
     1D 0A    = ZONE_CHECK(29) <- our target
 
-  The search will tell you the memory address.
-  Then set a read breakpoint:
-  BPMR <address+4> 1
+  When you find it, note the file offset, then set a read breakpoint:
+  BPMR <segment>:<offset> 1
 
-  (address+4 because 0x1D is 4 bytes into the pattern)
+Option B: Just use the function breakpoint (easier!)
+  Skip memory hunting and use STEP 4 below - it's much simpler.
 
 ═══════════════════════════════════════════════════════════════════════════
 STEP 4: Alternative - Break on objective processing function
@@ -131,9 +131,10 @@ F5 or C             - Continue execution
 F10                 - Step over (execute one instruction)
 F11                 - Step into (follow calls)
 R                   - Show registers
-D <address>         - Dump memory
+D <address>         - Dump memory to screen
 U <address>         - Disassemble
-SEARCH              - Search memory for bytes
+MEMDUMP <file>      - Dump all memory to file
+MEMDUMPBIN <file>   - Dump all memory to binary file
 LOG <file>          - Start logging output
 
 ═══════════════════════════════════════════════════════════════════════════
