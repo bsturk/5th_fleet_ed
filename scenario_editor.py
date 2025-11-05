@@ -1379,6 +1379,11 @@ class ScenarioEditorApp:
         found_alt_turns = False
         current_player = None  # Track which player's objectives we're in
 
+        # Pre-scan for convoy-related opcodes
+        has_convoy_rule = any(op == 0x05 and oper == 0x06 for op, oper in script)
+        has_convoy_port = any(op == 0x18 for op, oper in script)
+        has_ship_dest = any(op == 0x06 for op, oper in script)
+
         for opcode, operand in script:
             if opcode == 0x01:  # TURNS - player objective delimiter
                 found_turns_01 = True
@@ -1406,6 +1411,9 @@ class ScenarioEditorApp:
                     lines.append("• Special: No cruise missile attacks allowed")
                 elif operand == 0x06:
                     lines.append("• Special: Convoy delivery mission active")
+                    if not has_convoy_port and not has_ship_dest:
+                        lines.append("    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found")
+                        lines.append("    Destination only specified in narrative text above")
                 elif operand == 0x00:
                     lines.append("• Special: Standard engagement rules")
                 else:
@@ -1424,10 +1432,14 @@ class ScenarioEditorApp:
             elif opcode == 0x00:  # END
                 if operand > 0:
                     region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
-                    lines.append(f"• Victory check: {region_name}")
+                    lines.append(f"• Victory check region: {region_name}")
+                    lines.append("    (May be global end-game trigger, not player-specific objective)")
 
             elif opcode == 0x03:  # SCORE
-                lines.append(f"• Victory points objective (ref: {operand})")
+                # Provide generic description since VP table format is undocumented
+                vp_desc = "Destroy as many enemy units as possible"
+                lines.append(f"• Victory points: {vp_desc}")
+                lines.append(f"    (VP reference: {operand} - see narrative text for specifics)")
 
             elif opcode == 0x06:  # SHIP_DEST
                 port_name = self._extract_port_name(operand)
@@ -1438,10 +1450,18 @@ class ScenarioEditorApp:
 
             elif opcode == 0x0e:  # BASE_RULE
                 base_name = self._extract_base_name(operand)
-                if base_name:
-                    lines.append(f"• Airfield/base objective: {base_name}")
+                # Add contextual hint based on player
+                if current_player == "Red":
+                    action_hint = " (likely: attack/destroy)"
+                elif current_player == "Green":
+                    action_hint = " (likely: defend)"
                 else:
-                    lines.append(f"• Airfield/base objective (base ID {operand})")
+                    action_hint = ""
+
+                if base_name:
+                    lines.append(f"• Airfield/base objective: {base_name}{action_hint}")
+                else:
+                    lines.append(f"• Airfield/base objective (base ID {operand}){action_hint}")
 
             elif opcode == 0x18:  # CONVOY_PORT
                 port_name = self._extract_port_name(operand)
@@ -1506,6 +1526,11 @@ class ScenarioEditorApp:
         current_player = None  # None, "Green", or "Red"
         current_bg_tag = None
 
+        # Pre-scan for convoy-related opcodes
+        has_convoy_rule = any(op == 0x05 and oper == 0x06 for op, oper in script)
+        has_convoy_port = any(op == 0x18 for op, oper in script)
+        has_ship_dest = any(op == 0x06 for op, oper in script)
+
         for opcode, operand in script:
             if opcode == 0x01:  # TURNS - player objective delimiter
                 if operand == 0x0d:
@@ -1551,6 +1576,9 @@ class ScenarioEditorApp:
                     text_widget.insert(tk.END, "• Special: No cruise missile attacks allowed\n")
                 elif operand == 0x06:
                     text_widget.insert(tk.END, "• Special: Convoy delivery mission active\n")
+                    if not has_convoy_port and not has_ship_dest:
+                        text_widget.insert(tk.END, "    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found\n")
+                        text_widget.insert(tk.END, "    Destination only specified in narrative text above\n")
                 elif operand == 0x00:
                     text_widget.insert(tk.END, "• Special: Standard engagement rules\n")
                 else:
@@ -1578,13 +1606,16 @@ class ScenarioEditorApp:
                 if operand > 0:
                     start_pos = text_widget.index(tk.INSERT)
                     region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
-                    text_widget.insert(tk.END, f"• Victory check: {region_name}\n")
+                    text_widget.insert(tk.END, f"• Victory check region: {region_name}\n")
+                    text_widget.insert(tk.END, "    (May be global end-game trigger, not player-specific objective)\n")
                     if current_bg_tag:
                         text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
             elif opcode == 0x03:  # SCORE
                 start_pos = text_widget.index(tk.INSERT)
-                text_widget.insert(tk.END, f"• Victory points objective (ref: {operand})\n")
+                vp_desc = "Destroy as many enemy units as possible"
+                text_widget.insert(tk.END, f"• Victory points: {vp_desc}\n")
+                text_widget.insert(tk.END, f"    (VP reference: {operand} - see narrative text for specifics)\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
@@ -1601,10 +1632,18 @@ class ScenarioEditorApp:
             elif opcode == 0x0e:  # BASE_RULE
                 start_pos = text_widget.index(tk.INSERT)
                 base_name = self._extract_base_name(operand)
-                if base_name:
-                    text_widget.insert(tk.END, f"• Airfield/base objective: {base_name}\n")
+                # Add contextual hint based on player
+                if current_player == "Red":
+                    action_hint = " (likely: attack/destroy)"
+                elif current_player == "Green":
+                    action_hint = " (likely: defend)"
                 else:
-                    text_widget.insert(tk.END, f"• Airfield/base objective (base ID: {operand})\n")
+                    action_hint = ""
+
+                if base_name:
+                    text_widget.insert(tk.END, f"• Airfield/base objective: {base_name}{action_hint}\n")
+                else:
+                    text_widget.insert(tk.END, f"• Airfield/base objective (base ID: {operand}){action_hint}\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
