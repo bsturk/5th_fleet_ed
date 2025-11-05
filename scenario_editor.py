@@ -1193,6 +1193,61 @@ class ScenarioEditorApp:
 
         return None
 
+    def _extract_objective_ports(self) -> List[str]:
+        """Extract objective port names from map file SHIP_DEST(251) markers.
+
+        Scans the raw map data for ports marked with 'fb 06' (SHIP_DEST(251)),
+        which indicates "objective hexes" as described in the game manual.
+
+        Returns list of objective port names (e.g., ["Aden", "Al Mukalla", "Ras Karma"]).
+        """
+        if self.map_file is None or self.map_file.path is None:
+            return []
+
+        try:
+            # Read raw map file data
+            map_data = self.map_file.path.read_bytes()
+
+            # Search for 'fb 06' pattern (SHIP_DEST(251) marker)
+            objective_ports = []
+            pos = 0
+            while True:
+                idx = map_data.find(b'\xfb\x06', pos)
+                if idx == -1:
+                    break
+
+                # Port name should be 12-22 bytes after the marker
+                # Look for null-terminated string starting with capital letter
+                search_start = idx + 10
+                search_end = min(len(map_data), idx + 30)
+                segment = map_data[search_start:search_end]
+
+                # Find the port name
+                for i in range(len(segment)):
+                    if 65 <= segment[i] <= 90:  # Capital letter A-Z
+                        # Found potential start of port name
+                        name_start = i
+                        name_end = name_start
+                        while name_end < len(segment) and segment[name_end] != 0:
+                            name_end += 1
+
+                        if name_end > name_start:
+                            port_name = segment[name_start:name_end].decode('latin1', errors='replace')
+                            # Filter: must be 3+ chars, start with capital
+                            if len(port_name) >= 3 and port_name[0].isupper():
+                                # Only add if not already in list
+                                if port_name not in objective_ports:
+                                    objective_ports.append(port_name)
+                                break
+
+                pos = idx + 1
+
+            return objective_ports
+
+        except Exception:
+            # If anything goes wrong, return empty list
+            return []
+
     def _extract_convoy_ship_names(self) -> List[str]:
         """Extract convoy ship names from MAP pointer section 14.
 
@@ -1519,11 +1574,16 @@ class ScenarioEditorApp:
                     # Extract convoy ship names from MAP data
                     convoy_ships = self._extract_convoy_ship_names()
 
-                    # Find destination if CONVOY_PORT exists
+                    # Find destination if CONVOY_PORT exists in script
                     convoy_port_opcode = next((o for o in script if o[0] == 0x18), None)
                     destination = None
                     if convoy_port_opcode:
                         destination = self._extract_port_name(convoy_port_opcode[1])
+
+                    # If no explicit destination in script, check map file for objective ports
+                    objective_ports = []
+                    if not destination and not has_convoy_port and not has_ship_dest:
+                        objective_ports = self._extract_objective_ports()
 
                     # Build convoy objective description
                     if convoy_ships and destination:
@@ -1532,11 +1592,20 @@ class ScenarioEditorApp:
                     elif convoy_ships:
                         ship_list = ", ".join(convoy_ships)
                         lines.append(f"• Convoy objective: {ship_list}")
-                        lines.append("    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found")
-                        lines.append("    Destination only specified in narrative text above")
+                        if objective_ports:
+                            port_list = ", ".join(objective_ports)
+                            lines.append(f"    → Ships must reach: {port_list}")
+                            lines.append("    (Objective ports marked in map file with SHIP_DEST(251))")
+                        else:
+                            lines.append("    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found")
+                            lines.append("    Destination only specified in narrative text above")
                     else:
-                        lines.append("• Special: Convoy delivery mission active")
-                        if not has_convoy_port and not has_ship_dest:
+                        lines.append("• Special: Convoy/ship delivery mission active")
+                        if objective_ports:
+                            port_list = ", ".join(objective_ports)
+                            lines.append(f"    → Ships must reach: {port_list}")
+                            lines.append("    (Objective ports marked in map file with SHIP_DEST(251))")
+                        elif not has_convoy_port and not has_ship_dest:
                             lines.append("    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found")
                             lines.append("    Destination only specified in narrative text above")
                 elif operand == 0x00:
@@ -1652,6 +1721,18 @@ class ScenarioEditorApp:
             elif opcode == 0x3c:  # DELIVERY_CHECK
                 lines.append(f"• Delivery success/failure check (flags: {operand})")
 
+            elif opcode == 0x04:  # CONVOY_RULE
+                # Check map file for objective ports
+                objective_ports = self._extract_objective_ports()
+                if objective_ports:
+                    port_list = ", ".join(objective_ports)
+                    lines.append(f"• Ships must reach: {port_list}")
+                    lines.append("    (Objective ports marked in map file with SHIP_DEST(251))")
+                else:
+                    lines.append(f"• Convoy delivery rule (flags: {operand})")
+                    if not has_convoy_port and not has_ship_dest:
+                        lines.append("    ⚠ Destinations only specified in narrative text")
+
             elif opcode == 0x3d:  # PORT_LIST
                 lines.append(f"• Multi-destination port list (ref: {operand})")
 
@@ -1756,11 +1837,16 @@ class ScenarioEditorApp:
                     # Extract convoy ship names from MAP data
                     convoy_ships = self._extract_convoy_ship_names()
 
-                    # Find destination if CONVOY_PORT exists
+                    # Find destination if CONVOY_PORT exists in script
                     convoy_port_opcode = next((o for o in script if o[0] == 0x18), None)
                     destination = None
                     if convoy_port_opcode:
                         destination = self._extract_port_name(convoy_port_opcode[1])
+
+                    # If no explicit destination in script, check map file for objective ports
+                    objective_ports = []
+                    if not destination and not has_convoy_port and not has_ship_dest:
+                        objective_ports = self._extract_objective_ports()
 
                     # Build convoy objective description
                     if convoy_ships and destination:
@@ -1769,11 +1855,20 @@ class ScenarioEditorApp:
                     elif convoy_ships:
                         ship_list = ", ".join(convoy_ships)
                         text_widget.insert(tk.END, f"• Convoy objective: {ship_list}\n")
-                        text_widget.insert(tk.END, "    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found\n")
-                        text_widget.insert(tk.END, "    Destination only specified in narrative text above\n")
+                        if objective_ports:
+                            port_list = ", ".join(objective_ports)
+                            text_widget.insert(tk.END, f"    → Ships must reach: {port_list}\n")
+                            text_widget.insert(tk.END, "    (Objective ports marked in map file with SHIP_DEST(251))\n")
+                        else:
+                            text_widget.insert(tk.END, "    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found\n")
+                            text_widget.insert(tk.END, "    Destination only specified in narrative text above\n")
                     else:
-                        text_widget.insert(tk.END, "• Special: Convoy delivery mission active\n")
-                        if not has_convoy_port and not has_ship_dest:
+                        text_widget.insert(tk.END, "• Special: Convoy/ship delivery mission active\n")
+                        if objective_ports:
+                            port_list = ", ".join(objective_ports)
+                            text_widget.insert(tk.END, f"    → Ships must reach: {port_list}\n")
+                            text_widget.insert(tk.END, "    (Objective ports marked in map file with SHIP_DEST(251))\n")
+                        elif not has_convoy_port and not has_ship_dest:
                             text_widget.insert(tk.END, "    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found\n")
                             text_widget.insert(tk.END, "    Destination only specified in narrative text above\n")
                 elif operand == 0x00:
@@ -1919,6 +2014,21 @@ class ScenarioEditorApp:
             elif opcode == 0x3c:  # DELIVERY_CHECK
                 start_pos = text_widget.index(tk.INSERT)
                 text_widget.insert(tk.END, f"• Delivery success/failure check (flags: {operand})\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x04:  # CONVOY_RULE
+                start_pos = text_widget.index(tk.INSERT)
+                # Check map file for objective ports
+                objective_ports = self._extract_objective_ports()
+                if objective_ports:
+                    port_list = ", ".join(objective_ports)
+                    text_widget.insert(tk.END, f"• Ships must reach: {port_list}\n")
+                    text_widget.insert(tk.END, "    (Objective ports marked in map file with SHIP_DEST(251))\n")
+                else:
+                    text_widget.insert(tk.END, f"• Convoy delivery rule (flags: {operand})\n")
+                    if not has_convoy_port and not has_ship_dest:
+                        text_widget.insert(tk.END, "    ⚠ Destinations only specified in narrative text\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
