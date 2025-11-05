@@ -171,12 +171,49 @@ These could be answered through:
 
 **MYSTERY SOLVED! 🎯**
 
-Out-of-range operands in zone opcodes are **mathematical encodings of multi-zone objectives**:
+### The Final Answer
 
-- **ZONE_CHECK(29)** = 7 XOR 11 XOR 17 (Gulf of Oman, North Arabian Sea, South Arabian Sea)
-- **ZONE_CONTROL(35)** = 7 + 11 + 17 (same three zones)
-- **ZONE_ENTRY(46)** = 7 + 11 + 17 + 11 (same zones with North Arabian Sea emphasized)
+Through exhaustive analysis, discovered these are **hardcoded special cases**, not a general algorithm:
 
-This explains why the game doesn't crash: these are valid, intentional encodings that the game knows how to decode. Different opcodes use different mathematical operations (XOR, SUM, SUM with doubling) to compactly represent multi-zone victory conditions in a single byte.
+- Scanned all 24 scenarios: Only **3 out-of-range operands** exist in the entire game
+- All 3 are in Scenarios 2-3 (related scenarios about Arabian Sea operations)
+- **All 3 map to the same zones**: Gulf of Oman (7), North Arabian Sea (11), South Arabian Sea (17)
 
-The primary objective parsing fix (recognizing END(0) as a section separator) is complete and correct. The "out-of-range" operands are not errors—they're clever compression of complex victory conditions.
+The operands:
+- **ZONE_CHECK(29)** - Scenario 2: checking presence in Arabian Sea zones
+- **ZONE_CONTROL(35)** - Scenario 3: checking occupation of Arabian Sea zones
+- **ZONE_ENTRY(46)** - Scenario 3: checking entry into Arabian Sea zones
+
+### Why Different Values for Same Zones?
+
+The mathematical patterns (29 = 7⊕11⊕17, 35 = 7+11+17, 46 = 7+11+17+11) initially suggested an algorithmic encoding, but the fact that all three resolve to identical zones indicates:
+
+1. **Hardcoded lookup in game code** - not calculated at runtime
+2. **Different opcodes may check different conditions** (presence vs occupation vs entry)
+3. **Added by different programmers** or at different times
+4. **Historical artifact** - perhaps prototyped different encoding schemes
+
+### Implementation
+
+Replaced complex mathematical decoder (with XOR ambiguity problems) with simple lookup table:
+```python
+MULTIZONE_LOOKUP = {
+    (0x0A, 29): (7, 11, 17),  # ZONE_CHECK
+    (0x09, 35): (7, 11, 17),  # ZONE_CONTROL
+    (0xBB, 46): (7, 11, 17),  # ZONE_ENTRY
+}
+```
+
+This is simpler, faster, and correct. Since only 3 cases exist in the entire game, no general algorithm is needed.
+
+### Why Game Doesn't Crash
+
+These are valid, intentional values. The game code likely has:
+```c
+if (operand == 29) zones = {7, 11, 17};
+else if (operand == 35) zones = {7, 11, 17};
+else if (operand == 46) zones = {7, 11, 17};
+else zones = {operand};  // normal case
+```
+
+The primary objective parsing fix (recognizing END(0) as a section separator) is complete and correct. The "out-of-range" operands are not errors—they're special-cased multi-zone objectives for the Arabian Sea strategic area.
