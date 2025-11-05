@@ -89,6 +89,35 @@ Cross-referencing scenario objectives with observed opcode patterns yields this 
 
 **Operand resolution:** Operands reference region indices (0-21), pointer section 0 (zone/base IDs), pointer section 1 (unit/rule lookup), pointer section 6 (port lists), or embedded VP tables.
 
+#### BASE_RULE Opcode Base ID System (DECODED!)
+
+**Discovery (2025-01-05):** The BASE_RULE (0x0e) opcode uses a unique indirection system to reference airfield/base names:
+
+**Mapping Formula:**
+```
+BASE_RULE(operand) → pointer_section_9[operand - 1] → base name string
+```
+
+**Key Findings:**
+- **Pointer Section 9** stores base/airfield names as null-terminated strings
+- The operand is NOT a direct string table index
+- Formula: `string_index = operand - 1`
+- ALL null-terminated strings are counted (including single-character fragments)
+- Example: `BASE_RULE(5)` → index 4 in pointer section 9 → "Male Atoll"
+
+**Verification:**
+| Scenario | Operand | Index | Base Name | Region | Status |
+|----------|---------|-------|-----------|--------|--------|
+| Maldives (0) | 5 | 4 | Male Atoll | 10 (Maldives) | ✓ VERIFIED |
+
+**Technical Details:**
+- Pointer section 9 contains mixed data: base names interspersed with binary records
+- String parsing must include ALL null-terminated sequences, even garbage/fragments
+- This differs from pointer section 0, which uses (type, region_id) pairs
+- Base names appear multiple times in section 9 due to record structure
+
+**Why not pointer section 15?** Initial investigation suggested pointer section 15, but that section contains adjacency/connectivity data, not base names. The actual base name table is in **pointer section 9**.
+
 **Example decode** (*Maldives*):
 ```
 0x01,0x0d -> TURNS(13)            // 13-turn limit
