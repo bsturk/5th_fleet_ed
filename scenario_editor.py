@@ -58,7 +58,7 @@ OPCODE_MAP = {
     0x09: ("ZONE_CONTROL", "Zone idx", "Zone must be controlled/occupied"),
     0x0a: ("ZONE_CHECK", "Zone idx", "Check zone status"),
     0x0c: ("TASK_FORCE", "TF ref", "Task force objective"),
-    0x0e: ("BASE_RULE", "Base idx", "Airfield/base objective"),
+    0x0e: ("BASE_RULE", "Base ID", "Airfield/base objective (operand indexes pointer section 9 strings)"),
     0x0f: ("UNKNOWN_0F", "?", "Unknown"),
     0x13: ("PORT_RESTRICT", "Flags", "Replenishment port restrictions"),
     0x18: ("CONVOY_PORT", "Port idx", "Convoy destination port"),
@@ -1029,6 +1029,63 @@ class ScenarioEditorApp:
             return self.map_file.regions[index].name
         return ""
 
+    def _extract_base_name(self, base_rule_operand: int) -> Optional[str]:
+        """Extract base/airfield name from pointer section 9 using BASE_RULE operand.
+
+        BASE_RULE mapping: operand → pointer_section_9[operand - 1] → base name
+
+        Pointer section 9 contains null-terminated strings. We parse ALL strings
+        (including single-char fragments) and index using (operand - 1).
+        """
+        if self.map_file is None:
+            return None
+
+        # Find pointer section 9
+        pointer_section_9 = None
+        for entry in self.map_file.pointer_entries:
+            if entry.index == 9:
+                pointer_section_9 = entry
+                break
+
+        if pointer_section_9 is None:
+            return None
+
+        # Extract the raw data for pointer section 9
+        start_offset = pointer_section_9.start
+        # Calculate actual size by finding end of section
+        # The pointer_blob starts at pointer_data_base
+        section_data = self.map_file.pointer_blob[start_offset:start_offset + pointer_section_9.count]
+
+        # Parse ALL null-terminated strings (including fragments)
+        strings = []
+        i = 0
+        while i < len(section_data):
+            if section_data[i] == 0:
+                i += 1
+                continue
+
+            start = i
+            while i < len(section_data) and section_data[i] != 0:
+                i += 1
+
+            string = section_data[start:i].decode('latin1', errors='replace')
+            strings.append(string)
+            i += 1
+
+        # Apply the mapping formula: string_index = operand - 1
+        string_index = base_rule_operand - 1
+
+        if 0 <= string_index < len(strings):
+            base_name = strings[string_index]
+            # Filter out obvious garbage (single chars, control chars, etc)
+            # but return the name even if it looks odd for debugging
+            if len(base_name) >= 4 and base_name[0].isupper():
+                return base_name
+            # Return even if it doesn't look right, with a marker
+            return f"{base_name} [idx:{string_index}]"
+
+        return None
+
     # ------------------------------------------------------------------#
     # Win conditions handling
     # ------------------------------------------------------------------#
@@ -1129,8 +1186,11 @@ class ScenarioEditorApp:
             return f"Ships must reach port (index: {operand})"
 
         elif opcode == 0x0e:  # BASE_RULE
-            region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
-            return f"Airfield/base objective at {region_name}"
+            base_name = self._extract_base_name(operand)
+            if base_name:
+                return f"Airfield/base objective: {base_name}"
+            else:
+                return f"Airfield/base objective (base ID {operand})"
 
         elif opcode == 0x18:  # CONVOY_PORT
             return f"Convoy destination (port ref: {operand})"
@@ -1260,8 +1320,11 @@ class ScenarioEditorApp:
                 lines.append(f"• Ships must reach port (index: {operand})")
 
             elif opcode == 0x0e:  # BASE_RULE
-                region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
-                lines.append(f"• Airfield/base objective at {region_name}")
+                base_name = self._extract_base_name(operand)
+                if base_name:
+                    lines.append(f"• Airfield/base objective: {base_name}")
+                else:
+                    lines.append(f"• Airfield/base objective (base ID {operand})")
 
             elif opcode == 0x18:  # CONVOY_PORT
                 lines.append(f"• Convoy destination (port ref: {operand})")
