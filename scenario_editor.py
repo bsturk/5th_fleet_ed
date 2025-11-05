@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - ttk is bundled with Tk in CPython.
 # Opcode decoder ring from reverse engineering
 OPCODE_MAP = {
     0x00: ("END", "Region index", "End-of-script / victory check for region"),
-    0x01: ("TURNS", "?", "Turn limit marker"),
+    0x01: ("TURNS", "Side marker", "Player objective delimiter (0x0d=Green, 0x00=Red)"),
     0x03: ("SCORE", "VP ref", "Victory point objective"),
     0x04: ("CONVOY_RULE", "Flags", "Convoy delivery rule flags"),
     0x05: ("SPECIAL_RULE", "Code", "Special engagement rule"),
@@ -68,6 +68,7 @@ OPCODE_MAP = {
     0x3a: ("CONVOY_FALLBACK", "List ref", "Fallback port list"),
     0x3c: ("DELIVERY_CHECK", "Flags", "Delivery success/failure check"),
     0x3d: ("PORT_LIST", "List idx", "Port list (multi-destination)"),
+    0x41: ("FLEET_POSITION", "?", "Fleet positioning requirement"),
     0x6d: ("SUPPLY_LIMIT", "Port mask", "Supply port restrictions"),
     0xbb: ("ZONE_ENTRY", "Zone idx", "Zone entry requirement"),
 }
@@ -467,6 +468,13 @@ class ScenarioEditorApp:
         self.decoded_objectives_text.config(yscrollcommand=decoded_scroll.set)
         self.decoded_objectives_text.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
         decoded_scroll.grid(row=0, column=1, sticky="ns")
+
+        # Configure tags for player-specific objective coloring
+        self.decoded_objectives_text.tag_configure("green_bg", background="#e8f5e9")  # Light green
+        self.decoded_objectives_text.tag_configure("red_bg", background="#ffebee")    # Light red
+        self.decoded_objectives_text.tag_configure("green_header", background="#c8e6c9", font=("TkDefaultFont", 10, "bold"))
+        self.decoded_objectives_text.tag_configure("red_header", background="#ffcdd2", font=("TkDefaultFont", 10, "bold"))
+
         self.decoded_objectives_text.config(state=tk.DISABLED)
 
         columns = ("index", "opcode", "operand", "mnemonic", "description")
@@ -481,6 +489,13 @@ class ScenarioEditorApp:
         tree.column("operand", width=80, anchor=tk.W)
         tree.column("mnemonic", width=140, anchor=tk.W)
         tree.column("description", width=280, anchor=tk.W)
+
+        # Configure tags for player-specific row coloring
+        tree.tag_configure("green_row", background="#e8f5e9")  # Light green
+        tree.tag_configure("red_row", background="#ffebee")    # Light red
+        tree.tag_configure("green_header_row", background="#c8e6c9")  # Darker green for TURNS(0x0d)
+        tree.tag_configure("red_header_row", background="#ffcdd2")    # Darker red for TURNS(0x00)
+
         tree.grid(row=1, column=0, sticky="nsew", padx=6, pady=4)
         tree.bind("<<TreeviewSelect>>", self._on_select_win_word)
         self.win_tree = tree
@@ -1104,13 +1119,10 @@ class ScenarioEditorApp:
 
         # Update decoded objectives text
         if hasattr(self, "decoded_objectives_text"):
-            decoded_text = self._decode_objectives(script, record)
-            self.decoded_objectives_text.config(state=tk.NORMAL)
-            self.decoded_objectives_text.delete("1.0", tk.END)
-            self.decoded_objectives_text.insert(tk.END, decoded_text)
-            self.decoded_objectives_text.config(state=tk.DISABLED)
+            self._render_decoded_objectives(script, record)
 
         # Populate tree with opcode details
+        current_player = None  # Track which player context we're in
         for idx, (opcode, operand) in enumerate(script):
             if opcode in OPCODE_MAP:
                 mnemonic, op_type, _ = OPCODE_MAP[opcode]
@@ -1123,6 +1135,22 @@ class ScenarioEditorApp:
             # Decode the actual description based on opcode and operand value
             description = self._decode_opcode_description(opcode, operand)
 
+            # Determine row color based on TURNS opcode and current player context
+            tags = ()
+            if opcode == 0x01:  # TURNS opcode
+                if operand == 0x0d:
+                    current_player = "Green"
+                    tags = ("green_header_row",)
+                elif operand == 0x00:
+                    current_player = "Red"
+                    tags = ("red_header_row",)
+            else:
+                # Apply player-specific background to non-TURNS opcodes
+                if current_player == "Green":
+                    tags = ("green_row",)
+                elif current_player == "Red":
+                    tags = ("red_row",)
+
             self.win_tree.insert(
                 "",
                 tk.END,
@@ -1134,6 +1162,7 @@ class ScenarioEditorApp:
                     f"{mnemonic}({operand})",
                     description
                 ),
+                tags=tags,
             )
         self.win_index_var.set("-")
 
@@ -1144,10 +1173,14 @@ class ScenarioEditorApp:
         generic opcode description.
         """
         if opcode == 0x01:  # TURNS
-            if operand == 0xfe or operand == 0:
+            if operand == 0x0d:
+                return "Green player objectives start"
+            elif operand == 0x00:
+                return "Red player objectives start"
+            elif operand == 0xfe:
                 return "No turn limit (play until objectives complete)"
             else:
-                return f"Turn limit marker: {operand}"
+                return f"Player objective delimiter: {operand}"
 
         elif opcode == 0x2d:  # ALT_TURNS
             return f"Turn limit: {operand} turns"
@@ -1273,14 +1306,23 @@ class ScenarioEditorApp:
         # Track if we find turn-related opcodes
         found_turns_01 = False
         found_alt_turns = False
+        current_player = None  # Track which player's objectives we're in
 
         for opcode, operand in script:
-            if opcode == 0x01:  # TURNS
+            if opcode == 0x01:  # TURNS - player objective delimiter
                 found_turns_01 = True
-                if operand == 0xfe or operand == 0:
+                if operand == 0x0d:
+                    lines.append("")
+                    lines.append("═══ GREEN PLAYER OBJECTIVES ═══")
+                    current_player = "Green"
+                elif operand == 0x00:
+                    lines.append("")
+                    lines.append("═══ RED PLAYER OBJECTIVES ═══")
+                    current_player = "Red"
+                elif operand == 0xfe:
                     lines.append("• No turn limit (play until objectives complete)")
                 else:
-                    lines.append(f"• Turn limit marker: {operand}")
+                    lines.append(f"• Player objective delimiter: {operand}")
 
             elif opcode == 0x2d:  # ALT_TURNS
                 found_alt_turns = True
@@ -1353,6 +1395,174 @@ class ScenarioEditorApp:
                 lines.append(f"• Unknown: opcode 0x{opcode:02x}, operand {operand}")
 
         return "\n".join(lines)
+
+    def _render_decoded_objectives(self, script: List[Tuple[int, int]], record: ScenarioRecord) -> None:
+        """Render decoded objectives with color-coded backgrounds for each player."""
+        text_widget = self.decoded_objectives_text
+        text_widget.config(state=tk.NORMAL)
+        text_widget.delete("1.0", tk.END)
+
+        if not script:
+            text_widget.insert(tk.END, "No objective script found in trailing bytes.")
+            text_widget.config(state=tk.DISABLED)
+            return
+
+        # Extract turn count from byte offset 45 in trailing bytes
+        turn_count_from_byte45 = None
+        if len(record.trailing_bytes) > 45:
+            turn_count_from_byte45 = record.trailing_bytes[45]
+            text_widget.insert(tk.END, f"**Turn Limit: {turn_count_from_byte45} turns**\n\n")
+
+        # Track current player for background coloring
+        current_player = None  # None, "Green", or "Red"
+        current_bg_tag = None
+
+        for opcode, operand in script:
+            if opcode == 0x01:  # TURNS - player objective delimiter
+                if operand == 0x0d:
+                    # Green player section
+                    current_player = "Green"
+                    current_bg_tag = "green_bg"
+                    text_widget.insert(tk.END, "\n")
+                    start_pos = text_widget.index(tk.INSERT)
+                    text_widget.insert(tk.END, "═══ GREEN PLAYER OBJECTIVES ═══\n")
+                    end_pos = text_widget.index(tk.INSERT)
+                    text_widget.tag_add("green_header", start_pos, end_pos)
+
+                elif operand == 0x00:
+                    # Red player section
+                    current_player = "Red"
+                    current_bg_tag = "red_bg"
+                    text_widget.insert(tk.END, "\n")
+                    start_pos = text_widget.index(tk.INSERT)
+                    text_widget.insert(tk.END, "═══ RED PLAYER OBJECTIVES ═══\n")
+                    end_pos = text_widget.index(tk.INSERT)
+                    text_widget.tag_add("red_header", start_pos, end_pos)
+
+                elif operand == 0xfe:
+                    start_pos = text_widget.index(tk.INSERT)
+                    text_widget.insert(tk.END, "• No turn limit (play until objectives complete)\n")
+                    if current_bg_tag:
+                        text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+                else:
+                    start_pos = text_widget.index(tk.INSERT)
+                    text_widget.insert(tk.END, f"• Turn limit marker: {operand}\n")
+                    if current_bg_tag:
+                        text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x2d:  # ALT_TURNS
+                start_pos = text_widget.index(tk.INSERT)
+                text_widget.insert(tk.END, f"• Turn limit: {operand} turns\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x05:  # SPECIAL_RULE
+                start_pos = text_widget.index(tk.INSERT)
+                if operand == 0xfe:
+                    text_widget.insert(tk.END, "• Special: No cruise missile attacks allowed\n")
+                elif operand == 0x06:
+                    text_widget.insert(tk.END, "• Special: Convoy delivery mission active\n")
+                elif operand == 0x00:
+                    text_widget.insert(tk.END, "• Special: Standard engagement rules\n")
+                else:
+                    text_widget.insert(tk.END, f"• Special rule: code {operand}\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x0c:  # TASK_FORCE
+                start_pos = text_widget.index(tk.INSERT)
+                if operand == 0xfe:
+                    text_widget.insert(tk.END, "• All task forces must survive\n")
+                else:
+                    text_widget.insert(tk.END, f"• Task force must survive/reach destination (ref: {operand})\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x09 or opcode == 0x0a:  # ZONE_CONTROL/CHECK
+                start_pos = text_widget.index(tk.INSERT)
+                region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                text_widget.insert(tk.END, f"• Control or occupy {region_name}\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x00:  # END
+                if operand > 0:
+                    start_pos = text_widget.index(tk.INSERT)
+                    region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                    text_widget.insert(tk.END, f"• Victory check: {region_name}\n")
+                    if current_bg_tag:
+                        text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x03:  # SCORE
+                start_pos = text_widget.index(tk.INSERT)
+                text_widget.insert(tk.END, f"• Victory points objective (ref: {operand})\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x06:  # SHIP_DEST
+                start_pos = text_widget.index(tk.INSERT)
+                text_widget.insert(tk.END, f"• Ships must reach port (index: {operand})\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x0e:  # BASE_RULE
+                start_pos = text_widget.index(tk.INSERT)
+                # Note: operand is a base/airfield ID, not a direct region index
+                text_widget.insert(tk.END, f"• Airfield/base objective (base ID: {operand})\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x18:  # CONVOY_PORT
+                start_pos = text_widget.index(tk.INSERT)
+                text_widget.insert(tk.END, f"• Convoy destination (port ref: {operand})\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0xbb:  # ZONE_ENTRY
+                start_pos = text_widget.index(tk.INSERT)
+                region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                text_widget.insert(tk.END, f"• Zone entry requirement: {region_name}\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x29:  # REGION_RULE
+                start_pos = text_widget.index(tk.INSERT)
+                region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                text_widget.insert(tk.END, f"• Region-based victory rule: {region_name}\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x3a:  # CONVOY_FALLBACK
+                start_pos = text_widget.index(tk.INSERT)
+                text_widget.insert(tk.END, f"• Convoy fallback port list (ref: {operand})\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x3c:  # DELIVERY_CHECK
+                start_pos = text_widget.index(tk.INSERT)
+                text_widget.insert(tk.END, f"• Delivery success/failure check (flags: {operand})\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x3d:  # PORT_LIST
+                start_pos = text_widget.index(tk.INSERT)
+                text_widget.insert(tk.END, f"• Multi-destination port list (ref: {operand})\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode in OPCODE_MAP:
+                start_pos = text_widget.index(tk.INSERT)
+                mnemonic, _, description = OPCODE_MAP[opcode]
+                text_widget.insert(tk.END, f"• {description} (param: {operand})\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+            else:
+                start_pos = text_widget.index(tk.INSERT)
+                text_widget.insert(tk.END, f"• Unknown: opcode 0x{opcode:02x}, operand {operand}\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+        text_widget.config(state=tk.DISABLED)
 
     def _trailing_words(self, record: ScenarioRecord) -> List[int]:
         if len(record.trailing_bytes) % 2 != 0:
