@@ -1,0 +1,136 @@
+═══════════════════════════════════════════════════════════════════════════
+DOSBOX-X EMS DEBUGGING: Access Extended Memory
+═══════════════════════════════════════════════════════════════════════════
+
+DISCOVERY: DOSBox-X debugger has "DOS EMS" command to show EMS memory handles!
+
+EMS (Expanded Memory Specification) is how DOS programs access memory beyond
+the 640KB conventional memory limit. The game likely stores scenario data in
+EMS, which is why MEMDUMP (only captures first 1MB) doesn't find it.
+
+═══════════════════════════════════════════════════════════════════════════
+DEBUGGING SESSION: Find Scenario Data in EMS
+═══════════════════════════════════════════════════════════════════════════
+
+STEP 1: Start game and load scenario
+────────────────────────────────────────────────────────────────────────────
+
+  dosbox-x -debug
+
+  In DOSBox:
+    MOUNT C /home/user/5th_fleet_ed/game
+    C:
+    FLEET
+
+  In game:
+    - Select "New Game"
+    - Choose "Scenario 2: Russian Raiders"
+    - Start the scenario (get to game map)
+    - Immediately press ALT+PAUSE
+
+STEP 2: Check EMS memory allocation
+────────────────────────────────────────────────────────────────────────────
+
+  In debugger:
+    DOS EMS
+
+  This will show something like:
+    Handle  Pages  Size(KB)  Name
+    0001    10     160       FLEET
+    0002    5      80        SCENARIO
+    etc.
+
+  Look for handles allocated by the game (names like FLEET, SCENARIO, etc.)
+  Note the handle numbers.
+
+STEP 3: Dump EMS memory to search for scenario data
+────────────────────────────────────────────────────
+
+  EMS memory is mapped into conventional memory through a "page frame" at a
+  specific segment (usually D000 or E000).
+
+  Method A: Use MEMDUMP on the EMS page frame
+
+    If DOS EMS shows handle 0001 with 10 pages:
+
+    MEMDUMP D000:0 A000
+    (dumps 40KB from segment D000)
+
+  Method B: Use MEMDUMPBIN for binary dump
+
+    MEMDUMPBIN D000:0 A000
+
+  The game maps EMS pages into the page frame as needed. We need to catch it
+  when scenario data is mapped.
+
+STEP 4: Alternative - Set breakpoint on EMS function calls
+────────────────────────────────────────────────────────────────────────────
+
+  EMS uses INT 67h for all operations.
+
+  Set breakpoint on EMS calls:
+    BPINT 67
+
+  Then continue:
+    F5
+
+  Each time it breaks:
+    R                    (check registers)
+
+  Look for AH register values:
+    AH=44h = Map Memory     (when scenario data is being mapped)
+    AH=47h = Get/Set Handle Pages
+    AH=48h = Get/Set Handle Name
+
+  When you see AH=44h (Map Memory):
+    - Note DX register (handle being mapped)
+    - Note the page frame segment (usually in BX or returned after call)
+    - That's where the data will be!
+
+STEP 5: Search the mapped memory
+────────────────────────────────────────────────────────────────────────────
+
+  Once you know which segment has the scenario data:
+
+  1. Dump it:
+     MEMDUMPBIN <segment>:0 FFFF
+
+  2. Exit DOSBox and search:
+     od -A x -t x1 memdump.bin | grep "0d 01 fe 0c 1d 0a"
+
+  3. If found, note the offset
+
+STEP 6: Set breakpoint on the actual data access
+────────────────────────────────────────────────────────────────────────────
+
+  Now that we know the segment and offset:
+
+  Restart game, get to same point, set memory read breakpoint:
+    BPMR <segment>:<offset> 1
+
+  This will break when the game CODE reads the operand byte!
+
+═══════════════════════════════════════════════════════════════════════════
+SIMPLIFIED APPROACH
+═══════════════════════════════════════════════════════════════════════════
+
+Try this first:
+
+1. Start scenario, press ALT+PAUSE
+2. Type: DOS EMS
+3. For each handle shown, dump the memory:
+   MEMDUMPBIN D000:0 A000
+   (or whatever the page frame segment is)
+4. Exit and search each dump for "0d 01 fe 0c 1d 0a"
+5. When you find it, restart and set BPMR on that location
+
+═══════════════════════════════════════════════════════════════════════════
+WHAT TO SEND ME
+═══════════════════════════════════════════════════════════════════════════
+
+1. Output of "DOS EMS" command after loading scenario
+2. Any memory dumps that contain the pattern
+3. The segment:offset where pattern was found
+4. Register dump when BPMR breakpoint hits (if you get that far)
+
+═══════════════════════════════════════════════════════════════════════════
