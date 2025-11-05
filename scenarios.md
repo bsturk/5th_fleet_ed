@@ -104,7 +104,7 @@
     *   Neither player may make cruise missile attacks in this scenario.
 
 ### **Scenario 6: Convoy Battles**
-*   **Game Length:** 7 turns (56 hours)
+*   **Game Length:** 7 turns (56 hours) [NOTE: actual game is 6 turns (48 hours)]
 *   **Complexity:** Medium
 *   **Forces: Green Player:**
     *   Several American supertankers are heading for the Strait of Malacca.
