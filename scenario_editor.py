@@ -1501,10 +1501,14 @@ class ScenarioEditorApp:
             elif opcode == 0x09 or opcode == 0x0a:  # ZONE_CONTROL/CHECK
                 if self.map_file and operand < len(self.map_file.regions):
                     region_name = self._region_name(operand)
+                elif operand == 254:
+                    region_name = "ALL zones (special value 0xfe)"
+                elif self.map_file and operand > len(self.map_file.regions):
+                    # Operand exceeds region count but game handles it (doesn't crash)
+                    # May be special victory condition ID, or game bounds-checks before use
+                    region_name = f"zone/condition {operand} (exceeds map region count; meaning unclear)"
                 else:
                     region_name = f"region {operand}"
-                    if self.map_file and operand >= len(self.map_file.regions):
-                        region_name += f" (not found in map - max region index is {len(self.map_file.regions)-1})"
                 lines.append(f"• Control or occupy {region_name}")
 
             elif opcode == 0x00:  # END
@@ -1736,10 +1740,14 @@ class ScenarioEditorApp:
                 start_pos = text_widget.index(tk.INSERT)
                 if self.map_file and operand < len(self.map_file.regions):
                     region_name = self._region_name(operand)
+                elif operand == 254:
+                    region_name = "ALL zones (special value 0xfe)"
+                elif self.map_file and operand > len(self.map_file.regions):
+                    # Operand exceeds region count but game handles it (doesn't crash)
+                    # May be special victory condition ID, or game bounds-checks before use
+                    region_name = f"zone/condition {operand} (exceeds map region count; meaning unclear)"
                 else:
                     region_name = f"region {operand}"
-                    if self.map_file and operand >= len(self.map_file.regions):
-                        region_name += f" (not found in map - max region index is {len(self.map_file.regions)-1})"
                 text_widget.insert(tk.END, f"• Control or occupy {region_name}\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
