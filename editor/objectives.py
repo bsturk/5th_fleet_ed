@@ -17,7 +17,7 @@ MAX_SCRIPT_WORDS = 64
 
 OPCODE_MAP: Dict[int, Tuple[str, str, str]] = {
     0x00: ("END", "Region index", "End-of-script / victory check for region"),
-    0x01: ("TURNS", "Turn count", "Turn limit (0x0d=13, 0x0f=15, 0x00=unlimited)"),
+    0x01: ("TURNS", "Side marker", "Player objective delimiter (0x0d=Green, 0x00=Red)"),
     0x03: ("SCORE", "VP ref", "Victory point objective"),
     0x04: ("CONVOY_RULE", "Flags", "Convoy delivery rule flags"),
     0x05: ("SPECIAL_RULE", "Code", "0xfe=no cruise missiles, 0x06=convoy active"),

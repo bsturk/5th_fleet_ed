@@ -56,14 +56,23 @@ def decode_script(script, scenario_title=""):
     lines.append("\nInterpreted objectives:")
 
     i = 0
+    current_player = None
     while i < len(script):
         opcode, operand = script[i]
 
-        if opcode == 0x01:  # Turn limit
-            if operand == 0xfe:
+        if opcode == 0x01:  # TURNS - player objective delimiter
+            if operand == 0x0d:
+                lines.append("")
+                lines.append("GREEN PLAYER OBJECTIVES:")
+                current_player = "Green"
+            elif operand == 0x00:
+                lines.append("")
+                lines.append("RED PLAYER OBJECTIVES:")
+                current_player = "Red"
+            elif operand == 0xfe:
                 lines.append("  • Duration: Until objectives complete")
             else:
-                lines.append(f"  • Turn limit: {operand} turns")
+                lines.append(f"  • Player objective delimiter: {operand}")
 
         elif opcode == 0x05:  # Special rule
             if operand == 0xfe:

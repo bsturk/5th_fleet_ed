@@ -62,7 +62,7 @@ Cross-referencing scenario objectives with observed opcode patterns yields this 
 | Opcode | Mnemonic | Operand | Description |
 |--------|----------|---------|-------------|
 | `0x00` | `END` | Region index | End-of-script / victory check for region |
-| `0x01` | `TURNS` | Turn count | Turn limit (NOTE: value 0x0d appears in many scenarios but doesn't directly match player-visible turn counts) |
+| `0x01` | `TURNS` | Side marker | **Player objective delimiter:** `0x0d`=Green objectives start, `0x00`=Red objectives start. Runtime: returns turn limit from trailing_bytes[45] (operand ignored). |
 | `0x03` | `SCORE` | VP ref | Victory point objective (indexes VP table) |
 | `0x04` | `CONVOY_RULE` | Flags | Convoy delivery rule flags |
 | `0x05` | `SPECIAL_RULE` | Code | `0xfe`=no cruise missiles, `0x06`=convoy active, `0x00`=standard |
@@ -82,6 +82,7 @@ Cross-referencing scenario objectives with observed opcode patterns yields this 
 | `0x3a` | `CONVOY_FALLBACK` | List ref | Fallback port list (pointer sect 6) |
 | `0x3c` | `DELIVERY_CHECK` | Flags | Delivery success/failure check |
 | `0x3d` | `PORT_LIST` | List idx | Port list (multi-destination objectives) |
+| `0x41` | `FLEET_POSITION` | ? | Fleet positioning requirement |
 | `0x6d` | `SUPPLY_LIMIT` | Port mask | Supply port restrictions (`0x75`=117 common) |
 | `0xbb` | `ZONE_ENTRY` | Zone idx | Zone entry requirement |
 
@@ -89,6 +90,32 @@ Cross-referencing scenario objectives with observed opcode patterns yields this 
 
 **Operand resolution:** Operands reference region indices (0-21), pointer section 0 (zone/base IDs), pointer section 1 (unit/rule lookup), pointer section 6 (port lists), or embedded VP tables.
 
+**Script Structure:** Objective scripts encode victory conditions for both players. The TURNS opcode serves as a delimiter between player-specific objective blocks.
+
+**Example decode** (*Maldives*):
+```
+Raw hex: 0d01 fe05 0605 0001 050e 1803 0600
+Decoded: [(0x01,0x0d), (0x05,0xfe), (0x05,0x06), (0x01,0x00), (0x0e,0x05), (0x03,0x18), (0x00,0x06)]
+
+GREEN PLAYER OBJECTIVES (starts with TURNS(0x0d)):
+  0x01,0x0d -> TURNS(0x0d)          // Green objectives start (5 turns from trailing_bytes[45])
+  0x05,0xfe -> SPECIAL_RULE(0xfe)  // No cruise missiles allowed
+  0x05,0x06 -> SPECIAL_RULE(6)     // Convoy mission active → fast convoy to Male Atoll
+
+RED PLAYER OBJECTIVES (starts with TURNS(0x00)):
+  0x01,0x00 -> TURNS(0x00)          // Red objectives start
+  0x0e,0x05 -> BASE_RULE(5)         // Airfield objective (base ID 5 → Male Atoll airfield per scenarios.md)
+  0x03,0x18 -> SCORE(24)            // Victory points
+
+SHARED/END:
+  0x00,0x06 -> END(6)               // Victory check region 6
+```
+
+**Note:** Some scenarios have only one TURNS opcode, indicating shared or asymmetric objectives where one side has special conditions and the other has generic "destroy enemy units" goals.
+
+**TURNS Opcode Dual Purpose:**
+1. **During parsing:** Operand `0x0d`/`0x00` delimits Green/Red objective blocks
+2. **During runtime evaluation:** Handler reads turn limit from `trailing_bytes[45]`, ignoring operand (see disassembly at 4430:1001)
 #### BASE_RULE Opcode Base ID System (DECODED!)
 
 **Discovery (2025-01-05):** The BASE_RULE (0x0e) opcode uses a unique indirection system to reference airfield/base names:
