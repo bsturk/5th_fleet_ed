@@ -649,8 +649,8 @@ class ScenarioEditorApp:
         self.trailing_text.insert(tk.END, record.trailing_bytes.hex())
         self.scenario_key_var.set(record.scenario_key or "<unknown>")
         self.scenario_difficulty_var.set(record.difficulty_token or "<unknown>")
-        self.refresh_win_table()
         self._ensure_map_for_scenario(record)
+        self.refresh_win_table()
 
     def apply_scenario_changes(self) -> None:
         if self.scenario_file is None or self.selected_scenario_index is None:
