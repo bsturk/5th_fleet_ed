@@ -1466,14 +1466,37 @@ class ScenarioEditorApp:
         # Parse objective script from trailing bytes
         script = self._parse_objective_script(record.trailing_bytes)
 
+        # Validate script quality - some scenarios have corrupt or missing objective data
+        valid_opcodes = {0x00, 0x01, 0x03, 0x04, 0x05, 0x06, 0x09, 0x0a, 0x0c, 0x0e,
+                        0x13, 0x18, 0x1d, 0x29, 0x2d, 0x3a, 0x3c, 0x3d, 0x41, 0x6d, 0xbb}
+        if script:
+            valid_count = sum(1 for op, _ in script if op in valid_opcodes)
+            validity_ratio = valid_count / len(script)
+        else:
+            validity_ratio = 0
+
         # Update decoded objectives text
         if hasattr(self, "decoded_objectives_text"):
-            self._render_decoded_objectives(script, record)
+            if validity_ratio < 0.6 and len(script) > 0:
+                # Likely corrupt or non-objective data
+                self.decoded_objectives_text.config(state=tk.NORMAL)
+                self.decoded_objectives_text.delete("1.0", tk.END)
+                self.decoded_objectives_text.insert("1.0",
+                    "⚠ No valid objective data found in this scenario.\n\n"
+                    f"Only {valid_count}/{len(script)} opcodes are valid ({validity_ratio*100:.0f}%).\n"
+                    "This scenario may use a different data format or have incomplete objective encoding.\n\n"
+                    "✓ Refer to the scenario briefing text (Forces/Objectives in Scenario tab) for actual objectives.\n"
+                    "✓ The raw hex data is shown below for debugging.")
+                self.decoded_objectives_text.config(state=tk.DISABLED)
+            else:
+                self._render_decoded_objectives(script, record)
 
         # Pre-scan to find END opcode as potential section separator
         # This can be END(0), END(1), or any END with opcodes after it
+        # Example: Scenario 5 has TURNS(0x0d), objectives, END(0), more objectives
         end_zero_index = None
         has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
+        has_explicit_green_marker = any(op == 0x01 and oper == 0x0d for op, oper in script)
         for idx, (op, oper) in enumerate(script):
             if op == 0x00:
                 # Check if there are more opcodes after this END
@@ -1483,6 +1506,12 @@ class ScenarioEditorApp:
 
         # Populate tree with opcode details
         current_player = None  # Track which player context we're in
+
+        # For scenarios without any PLAYER_SECTION markers, default to Green before END, Red after
+        # BUT ONLY if the data appears valid (>= 60% valid opcodes)
+        if validity_ratio >= 0.6 and not has_explicit_green_marker and not has_explicit_red_marker and end_zero_index is not None:
+            current_player = "Green"  # Default assumption for scenarios without markers
+
         for idx, (opcode, operand) in enumerate(script):
             if opcode in OPCODE_MAP:
                 mnemonic, op_type, _ = OPCODE_MAP[opcode]
@@ -1731,6 +1760,7 @@ class ScenarioEditorApp:
         has_convoy_port = any(op == 0x18 for op, oper in script)
         has_ship_dest = any(op == 0x06 for op, oper in script)
         has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
+        has_explicit_green_marker = any(op == 0x01 and oper == 0x0d for op, oper in script)
 
         # Pre-scan to find END opcode as potential section separator
         # This can be END(0), END(1), or any END with opcodes after it
@@ -1741,6 +1771,10 @@ class ScenarioEditorApp:
                 if idx + 1 < len(script):
                     end_zero_index = idx
                 break
+
+        # For scenarios without any PLAYER_SECTION markers, default to Green before END, Red after
+        if not has_explicit_green_marker and not has_explicit_red_marker and end_zero_index is not None:
+            current_player = "Green"
 
         for idx, (opcode, operand) in enumerate(script):
             if opcode == 0x01:  # PLAYER_SECTION - player objective delimiter
@@ -1983,6 +2017,7 @@ class ScenarioEditorApp:
         has_convoy_port = any(op == 0x18 for op, oper in script)
         has_ship_dest = any(op == 0x06 for op, oper in script)
         has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
+        has_explicit_green_marker = any(op == 0x01 and oper == 0x0d for op, oper in script)
 
         # Pre-scan to find END opcode as potential section separator
         # This can be END(0), END(1), or any END with opcodes after it
@@ -1993,6 +2028,11 @@ class ScenarioEditorApp:
                 if idx + 1 < len(script):
                     end_zero_index = idx
                 break
+
+        # For scenarios without any PLAYER_SECTION markers, default to Green before END, Red after
+        if not has_explicit_green_marker and not has_explicit_red_marker and end_zero_index is not None:
+            current_player = "Green"
+            current_bg_tag = "green_bg"
 
         for idx, (opcode, operand) in enumerate(script):
             if opcode == 0x01:  # PLAYER_SECTION - player objective delimiter
