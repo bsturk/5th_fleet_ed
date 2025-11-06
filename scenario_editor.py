@@ -1520,15 +1520,19 @@ class ScenarioEditorApp:
         current_player = None  # Track which player context we're in
 
         # Determine scenario type and set default coloring
+        # CRITICAL DISCOVERY: Only scenarios 0-4 use PLAYER_SECTION markers to split objectives!
+        # Scenarios 5-23 (except 14) do NOT encode player separation in opcode scripts.
+        # They encode scenario setup, victory conditions, and game rules - not player-specific objectives.
         if has_campaign_marker:
-            # Campaign mode - use campaign coloring throughout
+            # Scenario 14: Campaign mode marker (0xc0)
             current_player = "Campaign"
-        elif not has_explicit_green_marker and not has_explicit_red_marker:
-            # Single-player scenario (no player section markers) - use neutral coloring
+        elif has_explicit_green_marker or has_explicit_red_marker:
+            # Scenarios 0-4: Explicitly separate Green/Red objectives with PLAYER_SECTION markers
+            current_player = None  # Will be set by the markers themselves
+        else:
+            # Scenarios 5-13, 15-23: No player markers - opcodes encode game rules, not player objectives
+            # Display with neutral coloring since there's no player split in the opcode script
             current_player = "Neutral"
-        elif not has_explicit_green_marker and not has_explicit_red_marker and end_zero_index is not None:
-            # Legacy fallback for scenarios without markers
-            current_player = "Green"
 
         for idx, (opcode, operand) in enumerate(script):
             if opcode in OPCODE_MAP:
@@ -1594,11 +1598,11 @@ class ScenarioEditorApp:
         """
         if opcode == 0x01:  # PLAYER_SECTION
             if operand == 0x0d:
-                return "Green player objectives start (turn count at trailing_bytes[45])"
+                return "Green player objectives start (ONLY in scenarios 0-4; turn count at trailing_bytes[45])"
             elif operand == 0x00:
-                return "Red player objectives start"
+                return "Red player objectives start (ONLY in scenarios 0-4)"
             elif operand == 0xc0:
-                return "Campaign mode scenario (single-player, special rules)"
+                return "Campaign mode marker (scenario 14 only)"
             elif operand == 0xfe:
                 return "No turn limit (play until objectives complete)"
             else:
