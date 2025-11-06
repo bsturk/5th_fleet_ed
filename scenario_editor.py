@@ -1312,6 +1312,16 @@ class ScenarioEditorApp:
         if hasattr(self, "decoded_objectives_text"):
             self._render_decoded_objectives(script, record)
 
+        # Pre-scan to find END(0) as potential section separator
+        end_zero_index = None
+        has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
+        for idx, (op, oper) in enumerate(script):
+            if op == 0x00 and oper == 0x00:
+                # Check if there are more opcodes after this END(0)
+                if idx + 1 < len(script):
+                    end_zero_index = idx
+                break
+
         # Populate tree with opcode details
         current_player = None  # Track which player context we're in
         for idx, (opcode, operand) in enumerate(script):
@@ -1335,6 +1345,11 @@ class ScenarioEditorApp:
                 elif operand == 0x00:
                     current_player = "Red"
                     tags = ("red_header_row",)
+            elif opcode == 0x00 and operand == 0x00 and end_zero_index is not None and idx == end_zero_index:
+                # END(0) with more opcodes after it - treat as Red Player section separator
+                if not has_explicit_red_marker and current_player == "Green":
+                    current_player = "Red"
+                    # Don't apply tags to the delimiter itself
             else:
                 # Apply player-specific background to non-TURNS opcodes
                 if current_player == "Green":
@@ -1453,6 +1468,15 @@ class ScenarioEditorApp:
 
         elif opcode == 0x3d:  # PORT_LIST
             return f"Multi-destination port list (ref: {operand})"
+
+        elif opcode == 0x04:  # CONVOY_RULE
+            # Check map file for objective ports
+            objective_ports = self._extract_objective_ports()
+            if objective_ports:
+                port_list = ", ".join(objective_ports)
+                return f"Ships must reach: {port_list}"
+            else:
+                return f"Convoy delivery rule (flags: {operand})"
 
         elif opcode in OPCODE_MAP:
             _, _, description = OPCODE_MAP[opcode]
