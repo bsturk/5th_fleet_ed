@@ -126,6 +126,9 @@ class ScenarioEditorApp:
         self.selected_unit_kind: str = "air"
         self.selected_unit_slot: Optional[int] = None
 
+        # Scenario selector variable (shared across tabs)
+        self.scenario_selector_var = tk.StringVar()
+
         self.oob_map_filename_var = tk.StringVar(value="")
 
         self._build_menu()
@@ -363,11 +366,24 @@ class ScenarioEditorApp:
         self.oob_tab_index = len(self.notebook.tabs()) - 1  # Track tab index for updating
 
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(2, weight=1)
+        frame.rowconfigure(3, weight=1)
+
+        # Scenario selector
+        scenario_selector = ttk.Frame(frame)
+        scenario_selector.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 2))
+        ttk.Label(scenario_selector, text="Scenario:").pack(side=tk.LEFT)
+        self.oob_scenario_combo = ttk.Combobox(
+            scenario_selector,
+            textvariable=self.scenario_selector_var,
+            state="readonly",
+            width=60,
+        )
+        self.oob_scenario_combo.pack(side=tk.LEFT, padx=4)
+        self.scenario_selector_var.trace_add("write", lambda *_: self._on_scenario_selector_change())
 
         # Kind selector
         selector = ttk.Frame(frame)
-        selector.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 2))
+        selector.grid(row=1, column=0, sticky="ew", padx=4, pady=(4, 2))
         ttk.Label(selector, text="Unit Table").pack(side=tk.LEFT)
         self.oob_kind_var = tk.StringVar(value="air")
         ttk.Combobox(
@@ -381,7 +397,7 @@ class ScenarioEditorApp:
 
         self.oob_status_var = tk.StringVar(value="Load a map to view unit tables.")
         ttk.Label(frame, textvariable=self.oob_status_var).grid(
-            row=1, column=0, sticky="w", padx=6, pady=(0, 2)
+            row=2, column=0, sticky="w", padx=6, pady=(0, 2)
         )
 
         # Units table
@@ -390,13 +406,13 @@ class ScenarioEditorApp:
         for col, label in zip(columns, ("Slot", "Template", "Side", "Region", "Tile (x,y)")):
             tree.heading(col, text=label)
             tree.column(col, width=110 if col == "template" else 80, anchor=tk.W)
-        tree.grid(row=2, column=0, sticky="nsew", padx=4, pady=4)
+        tree.grid(row=3, column=0, sticky="nsew", padx=4, pady=4)
         tree.bind("<<TreeviewSelect>>", self._on_select_unit)
         self.unit_tree = tree
 
         # Unit editor
         editor = ttk.LabelFrame(frame, text="Unit Details")
-        editor.grid(row=3, column=0, sticky="ew", padx=4, pady=4)
+        editor.grid(row=4, column=0, sticky="ew", padx=4, pady=4)
         editor.columnconfigure(1, weight=1)
 
         ttk.Label(editor, text="Template").grid(row=0, column=0, sticky="w", padx=2, pady=2)
@@ -456,11 +472,23 @@ class ScenarioEditorApp:
         self.notebook.add(frame, text="Objectives")
 
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(1, weight=1)
+        frame.rowconfigure(2, weight=1)
+
+        # Scenario selector
+        scenario_selector = ttk.Frame(frame)
+        scenario_selector.grid(row=0, column=0, sticky="ew", padx=6, pady=(4, 2))
+        ttk.Label(scenario_selector, text="Scenario:").pack(side=tk.LEFT)
+        self.objectives_scenario_combo = ttk.Combobox(
+            scenario_selector,
+            textvariable=self.scenario_selector_var,
+            state="readonly",
+            width=60,
+        )
+        self.objectives_scenario_combo.pack(side=tk.LEFT, padx=4)
 
         # Decoded objectives display
         decoded_frame = ttk.LabelFrame(frame, text="Decoded Objectives")
-        decoded_frame.grid(row=0, column=0, sticky="ew", padx=6, pady=(0, 4))
+        decoded_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 4))
         decoded_frame.columnconfigure(0, weight=1)
 
         self.decoded_objectives_text = tk.Text(decoded_frame, height=6, width=80, wrap=tk.WORD)
@@ -496,12 +524,12 @@ class ScenarioEditorApp:
         tree.tag_configure("green_header_row", background="#c8e6c9")  # Darker green for PLAYER_SECTION(0x0d)
         tree.tag_configure("red_header_row", background="#ffcdd2")    # Darker red for PLAYER_SECTION(0x00)
 
-        tree.grid(row=1, column=0, sticky="nsew", padx=6, pady=4)
+        tree.grid(row=2, column=0, sticky="nsew", padx=6, pady=4)
         tree.bind("<<TreeviewSelect>>", self._on_select_win_word)
         self.win_tree = tree
 
         editor = ttk.Frame(frame)
-        editor.grid(row=2, column=0, sticky="ew", padx=6, pady=4)
+        editor.grid(row=3, column=0, sticky="ew", padx=6, pady=4)
         editor.columnconfigure(3, weight=1)
         ttk.Label(editor, text="Selected #").grid(row=0, column=0, sticky="w")
         self.win_index_var = tk.StringVar(value="-")
@@ -618,6 +646,7 @@ class ScenarioEditorApp:
         count = 0
         if not self.scenario_file:
             self.scenario_count_var.set("Scenarios: 0")
+            self._update_scenario_selector()
             return
         for record in self.scenario_file.records:
             count += 1
@@ -627,6 +656,7 @@ class ScenarioEditorApp:
                 title = f"{title} [raw]"
             self.scenario_listbox.insert(tk.END, f"[{record.index}] {title} ({key_hint})")
         self.scenario_count_var.set(f"Scenarios: {count}")
+        self._update_scenario_selector()
 
     def _on_select_scenario(self, *_args) -> None:
         if not self.scenario_file:
@@ -637,6 +667,9 @@ class ScenarioEditorApp:
         index = selection[0]
         record = self.scenario_file.records[index]
         self.selected_scenario_index = index
+
+        # Update the scenario selector combobox
+        self._update_scenario_selector_value(index)
 
         self.scenario_title_var.set(record.metadata_entries[0].text if record.metadata_entries else "")
         self.forces_text.delete("1.0", tk.END)
@@ -651,6 +684,74 @@ class ScenarioEditorApp:
         self.scenario_difficulty_var.set(record.difficulty_token or "<unknown>")
         self._ensure_map_for_scenario(record)
         self.refresh_win_table()
+
+    def _update_scenario_selector(self) -> None:
+        """Update the scenario selector combobox with current scenarios."""
+        scenarios = []
+        if self.scenario_file:
+            for record in self.scenario_file.records:
+                title = record.metadata_strings()[0] if record.metadata_entries else f"Scenario {record.index}"
+                key_hint = record.scenario_key or "?"
+                scenarios.append(f"[{record.index}] {title} ({key_hint})")
+
+        # Update combobox values
+        if hasattr(self, 'oob_scenario_combo'):
+            self.oob_scenario_combo['values'] = scenarios
+        if hasattr(self, 'objectives_scenario_combo'):
+            self.objectives_scenario_combo['values'] = scenarios
+
+        # Update current selection
+        if self.selected_scenario_index is not None and scenarios:
+            self._update_scenario_selector_value(self.selected_scenario_index)
+
+    def _update_scenario_selector_value(self, index: int) -> None:
+        """Update the scenario selector to show the specified scenario index."""
+        if not self.scenario_file or index >= len(self.scenario_file.records):
+            return
+
+        record = self.scenario_file.records[index]
+        title = record.metadata_strings()[0] if record.metadata_entries else f"Scenario {record.index}"
+        key_hint = record.scenario_key or "?"
+        value = f"[{index}] {title} ({key_hint})"
+
+        # Temporarily remove the trace to avoid recursion
+        traces = self.scenario_selector_var.trace_info()
+        if traces:
+            for trace in traces:
+                if trace[0] == 'write':
+                    self.scenario_selector_var.trace_remove("write", trace[1])
+
+        self.scenario_selector_var.set(value)
+
+        # Re-add the trace
+        self.scenario_selector_var.trace_add("write", lambda *_: self._on_scenario_selector_change())
+
+    def _on_scenario_selector_change(self) -> None:
+        """Handle scenario selection change from the combobox."""
+        if not self.scenario_file:
+            return
+
+        # Parse the scenario index from the combo value
+        value = self.scenario_selector_var.get()
+        if not value or not value.startswith('['):
+            return
+
+        try:
+            # Extract index from "[0] Title (key)" format
+            index_str = value[1:value.index(']')]
+            index = int(index_str)
+        except (ValueError, IndexError):
+            return
+
+        # Don't trigger if already selected
+        if index == self.selected_scenario_index:
+            return
+
+        # Update the listbox selection (which will trigger _on_select_scenario)
+        self.scenario_listbox.selection_clear(0, tk.END)
+        self.scenario_listbox.selection_set(index)
+        self.scenario_listbox.see(index)
+        self._on_select_scenario()
 
     def apply_scenario_changes(self) -> None:
         if self.scenario_file is None or self.selected_scenario_index is None:
