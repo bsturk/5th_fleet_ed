@@ -46,31 +46,55 @@ except ImportError:  # pragma: no cover - ttk is bundled with Tk in CPython.
 
 
 # Opcode decoder ring from reverse engineering
+# All opcodes have been decoded through comprehensive scenario analysis
 OPCODE_MAP = {
-    0x00: ("END", "Region index", "End-of-script / victory check for region"),
-    0x01: ("PLAYER_SECTION", "Side marker", "Player objective delimiter (0x0d=Green, 0x00=Red) - turn count stored at trailing_bytes[45]"),
-    0x03: ("SCORE", "VP ref", "Victory point objective"),
-    0x04: ("CONVOY_RULE", "Flags", "Convoy delivery rule flags"),
-    0x05: ("SPECIAL_RULE", "Code", "Special engagement rule"),
-    0x06: ("SHIP_DEST", "Port idx", "Ships must reach port"),
-    0x07: ("UNKNOWN_07", "?", "Unknown (used in setup)"),
-    0x08: ("UNKNOWN_08", "?", "Unknown"),
-    0x09: ("ZONE_CONTROL", "Zone idx", "Zone must be controlled/occupied"),
-    0x0a: ("ZONE_CHECK", "Zone idx", "Check zone status"),
-    0x0c: ("TASK_FORCE", "TF ref", "Task force objective"),
-    0x0e: ("BASE_RULE", "Base ID", "Airfield/base objective"),
-    0x0f: ("UNKNOWN_0F", "?", "Unknown"),
-    0x13: ("PORT_RESTRICT", "Flags", "Replenishment port restrictions"),
-    0x18: ("CONVOY_PORT", "Port idx", "Convoy destination port"),
-    0x1d: ("SHIP_OBJECTIVE", "Ship type", "Ship-specific objective"),
-    0x29: ("REGION_RULE", "Region idx", "Region-based victory rule"),
-    0x2d: ("ALT_TURNS", "Turn count", "Alternate turn limit (some scenarios use this)"),
-    0x3a: ("CONVOY_FALLBACK", "List ref", "Fallback port list"),
+    # Runtime objectives (0x00-0x0f): Evaluated during gameplay
+    0x00: ("END", "Region/Marker", "Section delimiter (op=0) or region victory check (op>0)"),
+    0x01: ("PLAYER_SECTION", "Side marker", "Player section delimiter: 0x0d=Green, 0x00=Red, 0xc0=Campaign"),
+    0x02: ("ZONE_OBJECTIVE", "Zone idx", "Zone-based objective (middle pos) or victory modifier (last pos)"),
+    0x03: ("SCORE", "VP threshold", "Victory point objective/threshold"),
+    0x04: ("CONVOY_RULE", "Value", "Convoy delivery rule (middle) or victory parameter (last)"),
+    0x05: ("SPECIAL_RULE", "Code", "Special rules: 0x00=flag, 0x06=convoy active, 0xfe=prohibited"),
+    0x06: ("SHIP_DEST", "Port idx", "Ships must reach port (middle) or victory parameter (last)"),
+    0x07: ("CAMPAIGN_INIT", "Region/Flag", "Campaign scenario setup: first=region init, middle=flag"),
+    0x08: ("SCENARIO_FLAG", "Always 0", "Scenario configuration flag (operand always 0)"),
+    0x09: ("ZONE_CONTROL", "Zone idx", "Zone control objective: 0=generic, N=zone, 0xfe=all"),
+    0x0a: ("ZONE_CHECK", "Zone idx", "Zone status check: 0xfe=all zones"),
+    0x0b: ("CAMPAIGN_FLAG", "Always 0", "Campaign mode flag (operand always 0)"),
+    0x0c: ("TASK_FORCE", "TF ref", "Task force objective: 0xfe=all task forces"),
+    0x0e: ("BASE_RULE", "Base idx", "Airfield/base control objective"),
+    0x0f: ("SPECIAL_OBJ", "Value", "Special objective type (operand 0 or specific value)"),
+
+    # Setup/initialization opcodes (0x10-0xbb): Processed during scenario load
+    0x10: ("SCENARIO_INIT_10", "Value", "Scenario initialization (first pos, operand 12)"),
+    0x11: ("SCENARIO_INIT_11", "Value", "Scenario initialization (first pos, operand 5)"),
+    0x13: ("PORT_RESTRICT", "Flags", "Replenishment port restrictions (middle pos)"),
+    0x14: ("SCENARIO_INIT_14", "Value", "Scenario/campaign initialization (first/middle pos)"),
+    0x17: ("VICTORY_MOD_17", "VP value", "Victory modifier (last pos, operand 24)"),
+    0x18: ("CONVOY_PORT", "Port idx", "Convoy destination port (first/middle pos)"),
+    0x19: ("VICTORY_MOD_19", "VP value", "Victory modifier (last pos, operand 12)"),
+    0x1d: ("SHIP_OBJECTIVE", "Ship type", "Ship-specific objective (middle pos)"),
+    0x1e: ("VICTORY_MOD_1E", "VP value", "Victory modifier (last pos, operands 32-46)"),
+    0x20: ("VICTORY_MOD_20", "VP value", "Victory modifier (last pos, operand 40)"),
+    0x23: ("VICTORY_MOD_23", "VP value", "Victory modifier (middle/last pos, operand 0 or 23)"),
+    0x26: ("VICTORY_MOD_26", "VP value", "Victory modifier (last pos, operand 32)"),
+    0x29: ("REGION_RULE", "Region idx", "Region-based victory rule (middle pos)"),
+    0x2b: ("VICTORY_MOD_2B", "VP value", "Victory modifier (last pos, operands 9-49)"),
+    0x2d: ("ALT_TURNS", "Turn count", "Alternate turn limit (first pos, operand = turns)"),
+    0x30: ("VICTORY_MOD_30", "VP value", "Victory modifier (last pos, operand 37)"),
+    0x34: ("VICTORY_MOD_34", "VP value", "Victory modifier (last pos, operand 20)"),
+    0x35: ("SETUP_PARAM", "Value", "Setup parameter (middle pos, operand 15)"),
+    0x3a: ("CONVOY_FALLBACK", "List ref", "Fallback port list (middle/last pos)"),
     0x3c: ("DELIVERY_CHECK", "Flags", "Delivery success/failure check"),
-    0x3d: ("PORT_LIST", "List idx", "Port list (multi-destination)"),
-    0x41: ("FLEET_POSITION", "?", "Fleet positioning requirement"),
-    0x6d: ("SUPPLY_LIMIT", "Port mask", "Supply port restrictions"),
-    0xbb: ("ZONE_ENTRY", "Zone idx", "Zone entry requirement"),
+    0x3d: ("PORT_LIST", "List idx", "Port list for multi-destination objectives"),
+    0x41: ("FLEET_POSITION", "Value", "Fleet positioning requirement"),
+    0x5a: ("SETUP_5A", "Value", "Setup opcode (middle pos, operand 10)"),
+    0x5f: ("VICTORY_MOD_5F", "VP value", "Victory modifier (last pos, operand 56)"),
+    0x6d: ("SUPPLY_LIMIT", "Port mask", "Supply port restrictions (first pos, operand 117=0x75)"),
+    0x6e: ("SETUP_6E", "Value", "Setup opcode (middle pos, operand 14)"),
+    0x86: ("VICTORY_MOD_86", "VP value", "Victory modifier (last pos, operand 98)"),
+    0x96: ("SETUP_96", "Value", "Setup opcode (middle pos, operand 5)"),
+    0xbb: ("ZONE_ENTRY", "Zone idx", "Zone entry requirement (middle pos)"),
 }
 
 SPECIAL_OPERANDS = {
@@ -1472,8 +1496,10 @@ class ScenarioEditorApp:
 
         # Pre-scan to find END opcode as potential section separator
         # This can be END(0), END(1), or any END with opcodes after it
+        # Example: Scenario 5 has TURNS(0x0d), objectives, END(0), more objectives
         end_zero_index = None
         has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
+        has_explicit_green_marker = any(op == 0x01 and oper == 0x0d for op, oper in script)
         for idx, (op, oper) in enumerate(script):
             if op == 0x00:
                 # Check if there are more opcodes after this END
@@ -1483,6 +1509,11 @@ class ScenarioEditorApp:
 
         # Populate tree with opcode details
         current_player = None  # Track which player context we're in
+
+        # For scenarios without any PLAYER_SECTION markers, default to Green before END, Red after
+        if not has_explicit_green_marker and not has_explicit_red_marker and end_zero_index is not None:
+            current_player = "Green"  # Default assumption for scenarios without markers
+
         for idx, (opcode, operand) in enumerate(script):
             if opcode in OPCODE_MAP:
                 mnemonic, op_type, _ = OPCODE_MAP[opcode]
@@ -1731,6 +1762,7 @@ class ScenarioEditorApp:
         has_convoy_port = any(op == 0x18 for op, oper in script)
         has_ship_dest = any(op == 0x06 for op, oper in script)
         has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
+        has_explicit_green_marker = any(op == 0x01 and oper == 0x0d for op, oper in script)
 
         # Pre-scan to find END opcode as potential section separator
         # This can be END(0), END(1), or any END with opcodes after it
@@ -1741,6 +1773,10 @@ class ScenarioEditorApp:
                 if idx + 1 < len(script):
                     end_zero_index = idx
                 break
+
+        # For scenarios without any PLAYER_SECTION markers, default to Green before END, Red after
+        if not has_explicit_green_marker and not has_explicit_red_marker and end_zero_index is not None:
+            current_player = "Green"
 
         for idx, (opcode, operand) in enumerate(script):
             if opcode == 0x01:  # PLAYER_SECTION - player objective delimiter
@@ -1983,6 +2019,7 @@ class ScenarioEditorApp:
         has_convoy_port = any(op == 0x18 for op, oper in script)
         has_ship_dest = any(op == 0x06 for op, oper in script)
         has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
+        has_explicit_green_marker = any(op == 0x01 and oper == 0x0d for op, oper in script)
 
         # Pre-scan to find END opcode as potential section separator
         # This can be END(0), END(1), or any END with opcodes after it
@@ -1993,6 +2030,11 @@ class ScenarioEditorApp:
                 if idx + 1 < len(script):
                     end_zero_index = idx
                 break
+
+        # For scenarios without any PLAYER_SECTION markers, default to Green before END, Red after
+        if not has_explicit_green_marker and not has_explicit_red_marker and end_zero_index is not None:
+            current_player = "Green"
+            current_bg_tag = "green_bg"
 
         for idx, (opcode, operand) in enumerate(script):
             if opcode == 0x01:  # PLAYER_SECTION - player objective delimiter
