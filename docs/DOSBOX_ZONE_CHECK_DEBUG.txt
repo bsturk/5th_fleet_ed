@@ -1,0 +1,161 @@
+═══════════════════════════════════════════════════════════════════════════
+DOSBox Debugging Guide: Tracking ZONE_CHECK Operand 29 Decoding
+═══════════════════════════════════════════════════════════════════════════
+
+GOAL: Discover how the game decodes operand 29 in ZONE_CHECK opcode
+
+KEY FACTS:
+- Scenario 2 "Russian Raiders" has ZONE_CHECK(29) opcode
+- Operand 29 is at file offset 0x2DEE in SCENARIO.DAT
+- According to scenarios.md, this should represent:
+  "Gulf of Oman (7) OR North Arabian Sea (11) OR South Arabian Sea (17)"
+- Need to verify what the game actually does with value 29
+
+═══════════════════════════════════════════════════════════════════════════
+STEP 1: Launch DOSBox-X with debugger
+═══════════════════════════════════════════════════════════════════════════
+
+dosbox-x -debug
+
+═══════════════════════════════════════════════════════════════════════════
+STEP 2: Setup and load the game
+═══════════════════════════════════════════════════════════════════════════
+
+In DOSBox prompt:
+  MOUNT C /home/user/5th_fleet_ed/game
+  C:
+  FLEET
+
+Wait for game to load to main menu, then press ALT+PAUSE to break into debugger.
+
+═══════════════════════════════════════════════════════════════════════════
+STEP 3: Set memory breakpoint on operand 29 being read
+═══════════════════════════════════════════════════════════════════════════
+
+The operand 29 (0x1D) is at file offset 0x2DEE in SCENARIO.DAT.
+When loaded into memory, we need to find where it is.
+
+Option A: Use MEMDUMP to find the pattern
+  After selecting Scenario 2 in game, break and dump memory:
+  MEMDUMP memory.bin
+
+  Then search the file manually for the byte pattern:
+    0D 01 FE 0C 1D 0A
+
+  Where:
+    0D 01    = TURNS(13)
+    FE 0C    = TASK_FORCE(254)
+    1D 0A    = ZONE_CHECK(29) <- our target
+
+  When you find it, note the file offset, then set a read breakpoint:
+  BPMR <segment>:<offset> 1
+
+Option B: Just use the function breakpoint (easier!)
+  Skip memory hunting and use STEP 4 below - it's much simpler.
+
+═══════════════════════════════════════════════════════════════════════════
+STEP 4: Alternative - Break on objective processing function
+═══════════════════════════════════════════════════════════════════════════
+
+From disassembly, we know sub_6C2A7 processes objectives.
+
+Set breakpoint:
+  BP 6C2A7
+
+Then when it breaks, examine registers:
+  R
+
+The operand should be in a register or stack parameter.
+Step through with F10 and watch what the code does with value 29.
+
+═══════════════════════════════════════════════════════════════════════════
+STEP 5: Watch for zone array access
+═══════════════════════════════════════════════════════════════════════════
+
+If the game decodes operand 29 into zones 7, 11, 17, we should see:
+- Memory access at zone_array + 7*zone_size
+- Memory access at zone_array + 11*zone_size
+- Memory access at zone_array + 17*zone_size
+
+Watch for patterns like:
+  mov al, 1D        ; Load operand 29
+  <decoding logic>
+  mov bl, 07        ; Extract zone 7
+  <access zone 7>
+  mov bl, 0B        ; Extract zone 11
+  <access zone 11>
+  mov bl, 11        ; Extract zone 17
+  <access zone 17>
+
+═══════════════════════════════════════════════════════════════════════════
+STEP 6: Capture the decoding logic
+═══════════════════════════════════════════════════════════════════════════
+
+When you find the code that processes operand 29:
+
+1. Note the exact address where it happens
+2. Use LOG command to save disassembly:
+   LOG <filename>
+   U <address> L 50
+   (disassemble 50 bytes)
+
+3. Examine any lookup tables or bit operations
+4. Note what values are extracted from 29
+
+═══════════════════════════════════════════════════════════════════════════
+KEY QUESTIONS TO ANSWER:
+═══════════════════════════════════════════════════════════════════════════
+
+1. Does the game do bit operations on 29?
+   (XOR, AND, OR, shifts, rotates)
+
+2. Does it index a lookup table with 29?
+   (look for: mov bx, 1D; mov al, [table+bx])
+
+3. Does it loop through zones testing something?
+   (look for: loop counting 0-21, testing condition)
+
+4. What zones does it actually extract from operand 29?
+   (watch for values 7, 11, 17 appearing)
+
+═══════════════════════════════════════════════════════════════════════════
+QUICK REFERENCE COMMANDS:
+═══════════════════════════════════════════════════════════════════════════
+
+BP <address>         - Set code breakpoint
+BPMR <address> <len> - Set memory read breakpoint
+BPMW <address> <len> - Set memory write breakpoint
+BPLIST              - List all breakpoints
+BPDEL <num>         - Delete breakpoint
+F5 or C             - Continue execution
+F10                 - Step over (execute one instruction)
+F11                 - Step into (follow calls)
+R                   - Show registers
+D <address>         - Dump memory to screen
+U <address>         - Disassemble
+MEMDUMP <file>      - Dump all memory to file
+MEMDUMPBIN <file>   - Dump all memory to binary file
+LOG <file>          - Start logging output
+
+═══════════════════════════════════════════════════════════════════════════
+EXPECTED OUTCOMES:
+═══════════════════════════════════════════════════════════════════════════
+
+Hypothesis 1: Lookup table
+- Operand 29 indexes a table
+- Table[29] contains a bitmask or list: zones 7, 11, 17
+
+Hypothesis 2: Bit-encoded
+- Each bit in 29 (binary: 00011101) represents a zone
+- Bits 0,2,3,4 are set
+- But zones are 7,11,17 which don't match this pattern
+
+Hypothesis 3: Mathematical decoding
+- Game performs XOR/arithmetic to extract 7, 11, 17 from 29
+- May involve checking: (operand XOR zone) against other zones
+
+Hypothesis 4: Compressed encoding
+- Multiple zone indices packed into single byte
+- Game unpacks using specific algorithm
+
+═══════════════════════════════════════════════════════════════════════════

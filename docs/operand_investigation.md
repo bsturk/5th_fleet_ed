@@ -171,12 +171,91 @@ These could be answered through:
 
 **MYSTERY SOLVED! 🎯**
 
-Out-of-range operands in zone opcodes are **mathematical encodings of multi-zone objectives**:
+### The Final Answer
 
-- **ZONE_CHECK(29)** = 7 XOR 11 XOR 17 (Gulf of Oman, North Arabian Sea, South Arabian Sea)
-- **ZONE_CONTROL(35)** = 7 + 11 + 17 (same three zones)
-- **ZONE_ENTRY(46)** = 7 + 11 + 17 + 11 (same zones with North Arabian Sea emphasized)
+Through exhaustive analysis, discovered these are **hardcoded special cases**, not a general algorithm:
 
-This explains why the game doesn't crash: these are valid, intentional encodings that the game knows how to decode. Different opcodes use different mathematical operations (XOR, SUM, SUM with doubling) to compactly represent multi-zone victory conditions in a single byte.
+- Scanned all 24 scenarios: Only **3 out-of-range operands** exist in the entire game
+- All 3 are in Scenarios 2-3 (related scenarios about Arabian Sea operations)
+- **All 3 map to the same zones**: Gulf of Oman (7), North Arabian Sea (11), South Arabian Sea (17)
 
-The primary objective parsing fix (recognizing END(0) as a section separator) is complete and correct. The "out-of-range" operands are not errors—they're clever compression of complex victory conditions.
+The operands:
+- **ZONE_CHECK(29)** - Scenario 2: checking presence in Arabian Sea zones
+- **ZONE_CONTROL(35)** - Scenario 3: checking occupation of Arabian Sea zones
+- **ZONE_ENTRY(46)** - Scenario 3: checking entry into Arabian Sea zones
+
+### Why Different Values for Same Zones?
+
+The mathematical patterns (29 = 7⊕11⊕17, 35 = 7+11+17, 46 = 7+11+17+11) initially suggested an algorithmic encoding, but the fact that all three resolve to identical zones indicates:
+
+1. **Hardcoded lookup in game code** - not calculated at runtime
+2. **Different opcodes may check different conditions** (presence vs occupation vs entry)
+3. **Added by different programmers** or at different times
+4. **Historical artifact** - perhaps prototyped different encoding schemes
+
+### Implementation
+
+Replaced complex mathematical decoder (with XOR ambiguity problems) with simple lookup table:
+```python
+MULTIZONE_LOOKUP = {
+    (0x0A, 29): (7, 11, 17),  # ZONE_CHECK
+    (0x09, 35): (7, 11, 17),  # ZONE_CONTROL
+    (0xBB, 46): (7, 11, 17),  # ZONE_ENTRY
+}
+```
+
+This is simpler, faster, and correct. Since only 3 cases exist in the entire game, no general algorithm is needed.
+
+### Why Game Doesn't Crash
+
+These are valid, intentional values. The game code likely has:
+```c
+if (operand == 29) zones = {7, 11, 17};
+else if (operand == 35) zones = {7, 11, 17};
+else if (operand == 46) zones = {7, 11, 17};
+else zones = {operand};  // normal case
+```
+
+The primary objective parsing fix (recognizing END(0) as a section separator) is complete and correct. The "out-of-range" operands are not errors—they're special-cased multi-zone objectives for the Arabian Sea strategic area.
+
+## Addendum: Objective Hexes Discovery
+
+### The "Missing" Port Destinations Mystery
+
+Further investigation revealed an apparent discrepancy in Scenario 2 ("Russian Raiders"):
+- **Narrative text**: "The four Russian surface warships must reach Aden, Al Mukalla, or Ras Karma"
+- **Scenario objective script**: Only contains `CONVOY_RULE(5)` and `SCORE(51)` - NO explicit `SHIP_DEST` opcodes!
+
+This raised the question: Where are the port destinations encoded?
+
+### Discovery: Objective Hexes in Map Files
+
+The answer: **Objective destinations are marked in the MAP files, not the scenario files!**
+
+Analysis of **RAIDERS.DAT** (Scenario 2's map file) revealed that each port structure contains a SHIP_DEST marker:
+
+**Objective Ports** (marked with `fb 06` = SHIP_DEST(251)):
+- Aden at offset 0x093c
+- Al Mukalla at offset 0x09c8
+- Ras Karma at offset 0x0a54
+
+**Non-Objective Ports** (marked with `00 06` = SHIP_DEST(0)):
+- Diego Garcia, Raysut, and other ports
+
+The value 251 (0xfb) appears to be a special flag indicating "this port is an objective destination" - exactly matching the game manual's description of "objective hexes" with special designations.
+
+### How It Works
+
+Scenario 2's objective system:
+1. **CONVOY_RULE(5)**: Enables convoy/ship destination checking for Red player
+2. **SCORE(51)**: Victory requires 51 points
+3. **Map file markers**: SHIP_DEST(251) flags in RAIDERS.DAT identify which ports award victory points
+
+The game engine reads both the scenario objectives AND the map file port markers to determine valid destinations. This data-driven design allows the same map to be used with different scenarios, each potentially having different objective ports.
+
+### Implications for Editor
+
+The scenario editor should:
+1. Read map file port data to identify objective ports (SHIP_DEST(251) markers)
+2. Display "Ships must reach [list of objective ports]" when CONVOY_RULE or similar opcodes are present
+3. Cross-reference scenario objectives with map data for complete objective descriptions

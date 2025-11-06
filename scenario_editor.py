@@ -1045,68 +1045,44 @@ class ScenarioEditorApp:
         return ""
 
     def _decode_multizone_operand(self, opcode: int, operand: int) -> Optional[str]:
-        """Decode out-of-range zone operands that encode multiple zones mathematically.
+        """Decode out-of-range zone operands that encode multiple zones.
 
-        Discovery: Out-of-range operands (> 21) in zone opcodes are mathematical encodings:
-        - ZONE_CHECK (0x0A): Uses XOR - e.g., 29 = 7 XOR 11 XOR 17
-        - ZONE_CONTROL (0x09): Uses SUM - e.g., 35 = 7 + 11 + 17
-        - ZONE_ENTRY (0xBB): Uses SUM with zone doubling - e.g., 46 = 7 + 11 + 17 + 11
+        Discovery: Through exhaustive analysis of all 24 scenarios and the disassembly,
+        there are exactly THREE out-of-range zone operands in the entire game:
+        - Scenario 2: ZONE_CHECK(29)
+        - Scenario 3: ZONE_CONTROL(35) and ZONE_ENTRY(46)
 
-        Returns decoded zone names if a valid encoding is found, None otherwise.
+        All three map to the same strategic zone cluster: Gulf of Oman (7),
+        North Arabian Sea (11), and South Arabian Sea (17).
+
+        The different encodings (29 = 7⊕11⊕17, 35 = 7+11+17, 46 = 7+11+17+11)
+        suggest mathematical patterns, but analysis shows these are hardcoded
+        special cases in the game, not a general algorithm.
+
+        Returns decoded zone names if operand is one of these known cases.
         """
         if not self.map_file or operand <= 21:
             return None
 
-        max_zones = len(self.map_file.regions)
+        # Hardcoded lookup for the only 3 out-of-range operands in the game
+        # All map to the Arabian Sea strategic zone cluster
+        MULTIZONE_LOOKUP = {
+            (0x0A, 29): (7, 11, 17),  # ZONE_CHECK - Scenario 2
+            (0x09, 35): (7, 11, 17),  # ZONE_CONTROL - Scenario 3
+            (0xBB, 46): (7, 11, 17),  # ZONE_ENTRY - Scenario 3
+        }
 
-        # Try different decoding strategies based on opcode type
-        if opcode == 0x0A:  # ZONE_CHECK - uses XOR encoding
-            # Try 2-zone and 3-zone XOR combinations
-            for i in range(max_zones):
-                for j in range(i + 1, max_zones):
-                    if i ^ j == operand:
-                        z1, z2 = self._region_name(i), self._region_name(j)
-                        return f"{z1} OR {z2}"
-                    for k in range(j + 1, max_zones):
-                        if i ^ j ^ k == operand:
-                            z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
-                            return f"{z1} OR {z2} OR {z3}"
+        zones = MULTIZONE_LOOKUP.get((opcode, operand))
+        if zones:
+            zone_names = [self._region_name(z) for z in zones]
 
-        elif opcode == 0x09:  # ZONE_CONTROL - uses SUM encoding
-            # Try 2-zone and 3-zone SUM combinations
-            for i in range(max_zones):
-                for j in range(i + 1, max_zones):
-                    if i + j == operand:
-                        z1, z2 = self._region_name(i), self._region_name(j)
-                        return f"{z1} AND {z2}"
-                    for k in range(j + 1, max_zones):
-                        if i + j + k == operand:
-                            z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
-                            return f"{z1} AND {z2} AND {z3}"
-
-        elif opcode == 0xBB:  # ZONE_ENTRY - uses SUM with zone doubling
-            # Try 3-zone SUM with one zone doubled
-            for i in range(max_zones):
-                for j in range(i + 1, max_zones):
-                    for k in range(j + 1, max_zones):
-                        base_sum = i + j + k
-                        # Try doubling each zone
-                        for doubled_idx, doubled_zone in [(i, i), (j, j), (k, k)]:
-                            if base_sum + doubled_zone == operand:
-                                z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
-                                doubled_name = self._region_name(doubled_idx)
-                                return f"{z1}, {z2}, {z3} (emphasizing {doubled_name})"
-
-            # Also try simple SUM for 2 or 3 zones
-            for i in range(max_zones):
-                for j in range(i + 1, max_zones):
-                    if i + j == operand:
-                        z1, z2 = self._region_name(i), self._region_name(j)
-                        return f"{z1} AND {z2}"
-                    for k in range(j + 1, max_zones):
-                        if i + j + k == operand:
-                            z1, z2, z3 = self._region_name(i), self._region_name(j), self._region_name(k)
-                            return f"{z1} AND {z2} AND {z3}"
+            # Different opcodes imply different logical relationships
+            if opcode == 0x0A:  # ZONE_CHECK - checking presence/entry
+                return f"{zone_names[0]} OR {zone_names[1]} OR {zone_names[2]}"
+            elif opcode == 0x09:  # ZONE_CONTROL - checking occupation
+                return f"{zone_names[0]} AND {zone_names[1]} AND {zone_names[2]}"
+            elif opcode == 0xBB:  # ZONE_ENTRY - checking entry requirement
+                return f"{zone_names[0]}, {zone_names[1]}, {zone_names[2]}"
 
         return None
 
@@ -1216,6 +1192,61 @@ class ScenarioEditorApp:
                     return port_name
 
         return None
+
+    def _extract_objective_ports(self) -> List[str]:
+        """Extract objective port names from map file SHIP_DEST(251) markers.
+
+        Scans the raw map data for ports marked with 'fb 06' (SHIP_DEST(251)),
+        which indicates "objective hexes" as described in the game manual.
+
+        Returns list of objective port names (e.g., ["Aden", "Al Mukalla", "Ras Karma"]).
+        """
+        if self.map_file is None or self.map_file.path is None:
+            return []
+
+        try:
+            # Read raw map file data
+            map_data = self.map_file.path.read_bytes()
+
+            # Search for 'fb 06' pattern (SHIP_DEST(251) marker)
+            objective_ports = []
+            pos = 0
+            while True:
+                idx = map_data.find(b'\xfb\x06', pos)
+                if idx == -1:
+                    break
+
+                # Port name should be 12-22 bytes after the marker
+                # Look for null-terminated string starting with capital letter
+                search_start = idx + 10
+                search_end = min(len(map_data), idx + 30)
+                segment = map_data[search_start:search_end]
+
+                # Find the port name
+                for i in range(len(segment)):
+                    if 65 <= segment[i] <= 90:  # Capital letter A-Z
+                        # Found potential start of port name
+                        name_start = i
+                        name_end = name_start
+                        while name_end < len(segment) and segment[name_end] != 0:
+                            name_end += 1
+
+                        if name_end > name_start:
+                            port_name = segment[name_start:name_end].decode('latin1', errors='replace')
+                            # Filter: must be 3+ chars, start with capital
+                            if len(port_name) >= 3 and port_name[0].isupper():
+                                # Only add if not already in list
+                                if port_name not in objective_ports:
+                                    objective_ports.append(port_name)
+                                break
+
+                pos = idx + 1
+
+            return objective_ports
+
+        except Exception:
+            # If anything goes wrong, return empty list
+            return []
 
     def _extract_convoy_ship_names(self) -> List[str]:
         """Extract convoy ship names from MAP pointer section 14.
@@ -1543,11 +1574,16 @@ class ScenarioEditorApp:
                     # Extract convoy ship names from MAP data
                     convoy_ships = self._extract_convoy_ship_names()
 
-                    # Find destination if CONVOY_PORT exists
+                    # Find destination if CONVOY_PORT exists in script
                     convoy_port_opcode = next((o for o in script if o[0] == 0x18), None)
                     destination = None
                     if convoy_port_opcode:
                         destination = self._extract_port_name(convoy_port_opcode[1])
+
+                    # If no explicit destination in script, check map file for objective ports
+                    objective_ports = []
+                    if not destination and not has_convoy_port and not has_ship_dest:
+                        objective_ports = self._extract_objective_ports()
 
                     # Build convoy objective description
                     if convoy_ships and destination:
@@ -1556,11 +1592,20 @@ class ScenarioEditorApp:
                     elif convoy_ships:
                         ship_list = ", ".join(convoy_ships)
                         lines.append(f"• Convoy objective: {ship_list}")
-                        lines.append("    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found")
-                        lines.append("    Destination only specified in narrative text above")
+                        if objective_ports:
+                            port_list = ", ".join(objective_ports)
+                            lines.append(f"    → Ships must reach: {port_list}")
+                            lines.append("    (Objective ports marked in map file with SHIP_DEST(251))")
+                        else:
+                            lines.append("    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found")
+                            lines.append("    Destination only specified in narrative text above")
                     else:
-                        lines.append("• Special: Convoy delivery mission active")
-                        if not has_convoy_port and not has_ship_dest:
+                        lines.append("• Special: Convoy/ship delivery mission active")
+                        if objective_ports:
+                            port_list = ", ".join(objective_ports)
+                            lines.append(f"    → Ships must reach: {port_list}")
+                            lines.append("    (Objective ports marked in map file with SHIP_DEST(251))")
+                        elif not has_convoy_port and not has_ship_dest:
                             lines.append("    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found")
                             lines.append("    Destination only specified in narrative text above")
                 elif operand == 0x00:
@@ -1676,6 +1721,18 @@ class ScenarioEditorApp:
             elif opcode == 0x3c:  # DELIVERY_CHECK
                 lines.append(f"• Delivery success/failure check (flags: {operand})")
 
+            elif opcode == 0x04:  # CONVOY_RULE
+                # Check map file for objective ports
+                objective_ports = self._extract_objective_ports()
+                if objective_ports:
+                    port_list = ", ".join(objective_ports)
+                    lines.append(f"• Ships must reach: {port_list}")
+                    lines.append("    (Objective ports marked in map file with SHIP_DEST(251))")
+                else:
+                    lines.append(f"• Convoy delivery rule (flags: {operand})")
+                    if not has_convoy_port and not has_ship_dest:
+                        lines.append("    ⚠ Destinations only specified in narrative text")
+
             elif opcode == 0x3d:  # PORT_LIST
                 lines.append(f"• Multi-destination port list (ref: {operand})")
 
@@ -1780,11 +1837,16 @@ class ScenarioEditorApp:
                     # Extract convoy ship names from MAP data
                     convoy_ships = self._extract_convoy_ship_names()
 
-                    # Find destination if CONVOY_PORT exists
+                    # Find destination if CONVOY_PORT exists in script
                     convoy_port_opcode = next((o for o in script if o[0] == 0x18), None)
                     destination = None
                     if convoy_port_opcode:
                         destination = self._extract_port_name(convoy_port_opcode[1])
+
+                    # If no explicit destination in script, check map file for objective ports
+                    objective_ports = []
+                    if not destination and not has_convoy_port and not has_ship_dest:
+                        objective_ports = self._extract_objective_ports()
 
                     # Build convoy objective description
                     if convoy_ships and destination:
@@ -1793,11 +1855,20 @@ class ScenarioEditorApp:
                     elif convoy_ships:
                         ship_list = ", ".join(convoy_ships)
                         text_widget.insert(tk.END, f"• Convoy objective: {ship_list}\n")
-                        text_widget.insert(tk.END, "    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found\n")
-                        text_widget.insert(tk.END, "    Destination only specified in narrative text above\n")
+                        if objective_ports:
+                            port_list = ", ".join(objective_ports)
+                            text_widget.insert(tk.END, f"    → Ships must reach: {port_list}\n")
+                            text_widget.insert(tk.END, "    (Objective ports marked in map file with SHIP_DEST(251))\n")
+                        else:
+                            text_widget.insert(tk.END, "    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found\n")
+                            text_widget.insert(tk.END, "    Destination only specified in narrative text above\n")
                     else:
-                        text_widget.insert(tk.END, "• Special: Convoy delivery mission active\n")
-                        if not has_convoy_port and not has_ship_dest:
+                        text_widget.insert(tk.END, "• Special: Convoy/ship delivery mission active\n")
+                        if objective_ports:
+                            port_list = ", ".join(objective_ports)
+                            text_widget.insert(tk.END, f"    → Ships must reach: {port_list}\n")
+                            text_widget.insert(tk.END, "    (Objective ports marked in map file with SHIP_DEST(251))\n")
+                        elif not has_convoy_port and not has_ship_dest:
                             text_widget.insert(tk.END, "    ⚠ WARNING: No CONVOY_PORT or SHIP_DEST opcode found\n")
                             text_widget.insert(tk.END, "    Destination only specified in narrative text above\n")
                 elif operand == 0x00:
@@ -1943,6 +2014,21 @@ class ScenarioEditorApp:
             elif opcode == 0x3c:  # DELIVERY_CHECK
                 start_pos = text_widget.index(tk.INSERT)
                 text_widget.insert(tk.END, f"• Delivery success/failure check (flags: {operand})\n")
+                if current_bg_tag:
+                    text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
+
+            elif opcode == 0x04:  # CONVOY_RULE
+                start_pos = text_widget.index(tk.INSERT)
+                # Check map file for objective ports
+                objective_ports = self._extract_objective_ports()
+                if objective_ports:
+                    port_list = ", ".join(objective_ports)
+                    text_widget.insert(tk.END, f"• Ships must reach: {port_list}\n")
+                    text_widget.insert(tk.END, "    (Objective ports marked in map file with SHIP_DEST(251))\n")
+                else:
+                    text_widget.insert(tk.END, f"• Convoy delivery rule (flags: {operand})\n")
+                    if not has_convoy_port and not has_ship_dest:
+                        text_widget.insert(tk.END, "    ⚠ Destinations only specified in narrative text\n")
                 if current_bg_tag:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 

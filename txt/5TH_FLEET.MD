@@ -158,6 +158,128 @@ BASE_RULE(operand) → pointer_section_9[operand - 1] → base name string
 
 Use `decode_objectives.py` to decode all scenarios.
 
+#### Objective Hexes in Map Files - DISCOVERED! (2025-11-06)
+
+**BREAKTHROUGH:** Port destination objectives are NOT stored in scenario objective scripts but rather as **flags in the map file port structures**!
+
+**Discovery:** Investigation of Scenario 2 ("Russian Raiders") revealed an apparent discrepancy:
+- **Narrative text:** "The four Russian surface warships must reach Aden, Al Mukalla, or Ras Karma"
+- **Objective script:** Only contains `CONVOY_RULE(5)` and `SCORE(51)` — NO explicit `SHIP_DEST` opcodes!
+
+**The Solution:** Objective ports are marked with `SHIP_DEST(251)` flags embedded in the map file.
+
+**Map File Port Structure:**
+
+Each port in a map file (e.g., `RAIDERS.DAT`, `CARRIER.DAT`) is a **70-byte (0x46)** fixed-size entry containing port metadata. At **offset -10 bytes from the port name**, there is a SHIP_DEST marker:
+
+- **`fb 06`** = `SHIP_DEST(251)` = **Objective Port** (primary/secondary objective hex as described in game manual)
+- **`00 06`** = `SHIP_DEST(0)` = **Non-objective Port** (regular port)
+
+The value **251 (0xfb)** is a special flag indicating "this port is an objective destination."
+
+**Example: Scenario 2 (Russian Raiders)**
+
+**Scenario objective script** (in SCENARIO.DAT):
+```
+Red objectives:
+  CONVOY_RULE(5)    ; Enable ship destination checking
+  SCORE(51)         ; Requires 51 victory points
+```
+
+**Map file markers** (in RAIDERS.DAT):
+```
+Objective ports (SHIP_DEST(251) at 'fb 06'):
+  - Aden         (offset 0x093c)
+  - Al Mukalla   (offset 0x09c8)
+  - Ras Karma    (offset 0x0a54)
+
+Non-objective ports (SHIP_DEST(0) at '00 06'):
+  - Diego Garcia
+  - Raysut
+  - Other ports
+```
+
+**How It Works Together:**
+
+1. Scenario script contains `CONVOY_RULE(5)` or `SPECIAL_RULE(6)` which tells the game: "Check if ships reach objective ports"
+2. Scenario script contains `SCORE(X)` which sets the victory point threshold
+3. Map file marks specific ports with `SHIP_DEST(251)` to identify which ports award points
+4. Narrative text describes: "Ships must reach Aden, Al Mukalla, or Ras Karma"
+
+The game engine reads **both** the scenario objectives AND the map port markers to determine valid destinations and award victory points.
+
+**Why This Design?**
+
+This data-driven approach provides several benefits:
+
+1. **Reusability:** Same map can be used with different scenarios
+2. **Flexibility:** Different scenarios can have different objective ports on the same map
+3. **Designer Control:** Map designers can mark objective hexes independently of scenario scripts
+4. **Manual Reference:** Matches the game manual's description of "objective hexes" with "primary" or "secondary" designations
+
+**Detection Pattern:**
+
+To find objective ports in any map file:
+1. Search for byte pattern `fb 06` in raw map data
+2. Port name appears 10-22 bytes after the marker
+3. Look for null-terminated string starting with capital letter
+
+**Verification:**
+
+Tested with RAIDERS.DAT (Scenario 2):
+```
+Found objective port at offset 0x093c: Aden
+Found objective port at offset 0x09c8: Al Mukalla
+Found objective port at offset 0x0a54: Ras Karma
+```
+
+These match the narrative text exactly: *"The four Russian surface warships must reach Aden, Al Mukalla, or Ras Karma while destroying as many US merchant ships and warships as possible."*
+
+**Implementation Notes:**
+
+When implementing a scenario editor:
+1. Read map file port structures to identify ports marked with `SHIP_DEST(251)`
+2. Cross-reference scenario objectives (CONVOY_RULE, SCORE) with map markers
+3. Display complete objectives by combining scenario script data with map port data
+4. Example output: "Ships must reach Aden, Al Mukalla, or Ras Karma (51 points required)"
+
+**Related Opcodes:**
+
+- `0x04` (`CONVOY_RULE`) - Enables ship destination checking (Scenario 2)
+- `0x05` (`SPECIAL_RULE`) with operand `0x06` - Convoy mission active (other scenarios)
+- `0x06` (`SHIP_DEST`) - Direct port reference in scenario script (when used)
+- `0x18` (`CONVOY_PORT`) - Convoy destination port reference (when used)
+
+**Port Index System:**
+
+Ports in map files are stored in a fixed-size array starting around offset 0x0600-0x0900. Each port entry is 70 bytes (0x46). Port indices used in `SHIP_DEST` and `CONVOY_PORT` opcodes reference this array with varying formulas (operand, operand-1, or operand-2 depending on context).
+
+**Implementation in Scenario Editor:**
+
+The scenario editor (`scenario_editor.py`) now includes automatic objective port detection:
+
+1. **New method:** `_extract_objective_ports()` (lines 1196-1249)
+   - Scans raw map file data for `fb 06` byte pattern
+   - Extracts port names appearing 10-22 bytes after each marker
+   - Returns list of objective port names (e.g., `["Aden", "Al Mukalla", "Ras Karma"]`)
+
+2. **Updated opcode handlers:**
+   - `CONVOY_RULE` (0x04) handler (lines 1724-1734) - Detects and displays objective ports from map file
+   - `SPECIAL_RULE` (0x05) with operand 6 handler (lines 1570-1610) - Shows objective ports when no explicit CONVOY_PORT/SHIP_DEST in script
+
+3. **Display output:**
+   ```
+   ═══ RED PLAYER OBJECTIVES ═══
+   • Ships must reach: Aden, Al Mukalla, Ras Karma
+       (Objective ports marked in map file with SHIP_DEST(251))
+   • Victory points: Destroy as many enemy units as possible
+       (VP reference: 51 - see narrative text for specifics)
+   ```
+
+This enhancement ensures the editor displays complete objective information even when port destinations are stored in map files rather than scenario scripts. The implementation correctly handles Scenario 2 and other scenarios using the CONVOY_RULE or SPECIAL_RULE(6) system.
+
+**See also:** `docs/operand_investigation.md` for the full investigation trail that led to this discovery.
+
 #### Turn Count Storage - DISCOVERED! (2025-01-04)
 
 **BREAKTHROUGH:** After extensive disassembly analysis and data file investigation, the turn count storage location has been found!

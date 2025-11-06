@@ -1,0 +1,127 @@
+═══════════════════════════════════════════════════════════════════════════
+CORRECTED DEBUG STEPS: Operand 29 Investigation
+═══════════════════════════════════════════════════════════════════════════
+
+DISCOVERY: Scenario data is NOT in memory at selection screen.
+The game only loads SCENARIO.DAT when you actually START playing.
+
+═══════════════════════════════════════════════════════════════════════════
+APPROACH 1: Dump memory AFTER starting scenario (Easiest)
+═══════════════════════════════════════════════════════════════════════════
+
+1. Start DOSBox-X:
+   dosbox-x -debug
+
+2. In DOSBox:
+   MOUNT C /home/user/5th_fleet_ed/game
+   C:
+   FLEET
+
+3. In game:
+   - Select "New Game"
+   - Choose "Scenario 2: Russian Raiders"
+   - Click through briefing
+   - START the scenario (get to the actual game map/screen)
+   - Immediately press ALT+PAUSE to break
+
+4. In debugger:
+   MEMDUMPBIN scenario2_ingame.bin
+
+5. Exit DOSBox, search:
+   hexdump -C scenario2_ingame.bin | grep "0d 01 fe 0c 1d 0a"
+
+6. If found, note the offset, then:
+   - Restart game, get to same point
+   - Break with ALT+PAUSE
+   - Set memory breakpoint on that address
+   - Continue and watch what processes it
+
+═══════════════════════════════════════════════════════════════════════════
+APPROACH 2: Catch the file read (More complex but educational)
+═══════════════════════════════════════════════════════════════════════════
+
+1. Start game normally up to scenario selection screen
+
+2. Press ALT+PAUSE before clicking to start scenario
+
+3. Set breakpoint on DOS file read:
+   BPINT 21 3F
+
+   This breaks on INT 21h function 3Fh (read file)
+
+4. Continue:
+   F5
+
+5. It will break MANY times (every file read). Each time:
+   - Type R to see registers
+   - Check if BX register looks like a file handle (small number 3-10)
+   - Type F5 to continue
+
+6. Watch DOSBox console window for "SCENARIO.DAT" being opened
+
+7. When you see SCENARIO.DAT opened, the NEXT file read should be reading
+   the scenario data. Note the buffer address (usually in DS:DX or ES:DI)
+
+8. After that read completes:
+   - Clear the INT breakpoint: BPINT 21 3F (toggle off)
+   - Set memory breakpoint on the buffer where data was read
+   - Continue and watch for processing
+
+═══════════════════════════════════════════════════════════════════════════
+APPROACH 3: Use the byte pattern of ALL scenario 2 data (Most reliable)
+═══════════════════════════════════════════════════════════════════════════
+
+Scenario 2 starts with the scenario name. Let's search for that plus the
+objective data:
+
+After starting scenario and dumping memory, search for:
+
+  hexdump -C scenario2_ingame.bin | grep -i "russian"
+
+This finds "Russian Raiders" string. The objective data (0D 01 FE 0C 1D 0A)
+should be exactly 5871 bytes after the start of "Russian Raiders".
+
+Why 5871? Because SCENARIO.DAT format is:
+  - Scenario name (null-terminated string at offset 0)
+  - Scenario data (various fields)
+  - Trailing bytes with objectives start at offset 5871
+
+So:
+1. Find "Russian Raiders" in memory dump
+2. Add 5871 bytes to that offset
+3. Check if you see the opcode pattern there
+4. Set breakpoint on that location
+
+═══════════════════════════════════════════════════════════════════════════
+SIMPLEST APPROACH: Just play through and catch objectives check
+═══════════════════════════════════════════════════════════════════════════
+
+The game checks objectives at the END of each turn.
+
+1. Start Scenario 2
+2. Play through turn 1 (just end the turn immediately)
+3. As turn 1 ends, press ALT+PAUSE
+4. Now set breakpoint and step through turn-end processing
+
+The objective checking code will run at turn end, and you can watch it
+process operand 29.
+
+Commands to use:
+   F10 repeatedly (step over) watching register values
+   Look for value 1D (29) appearing in AL, BL, CL registers
+
+═══════════════════════════════════════════════════════════════════════════
+RECOMMENDED: Try Approach 1 first (dump after scenario starts)
+═══════════════════════════════════════════════════════════════════════════
+
+Once scenario starts, ALL the scenario data must be in memory for the game
+to access it. A memory dump at that point will definitely contain the
+objective script bytes.
+
+Let me know what you find when you:
+1. Start Scenario 2 (get to game map)
+2. ALT+PAUSE immediately
+3. MEMDUMPBIN scenario2_started.bin
+4. hexdump -C scenario2_started.bin | grep "0d 01 fe 0c 1d 0a"
+
+═══════════════════════════════════════════════════════════════════════════

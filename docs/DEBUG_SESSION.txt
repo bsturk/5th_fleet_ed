@@ -1,0 +1,74 @@
+═══════════════════════════════════════════════════════════════════════════
+SIMPLE DEBUG SESSION: Find what operand 29 means
+═══════════════════════════════════════════════════════════════════════════
+
+1. Start DOSBox-X:
+   $ dosbox-x -debug
+
+2. Mount and start game:
+   MOUNT C /home/user/5th_fleet_ed/game
+   C:
+   FLEET
+
+3. In game: Select "New Game" → Choose Scenario 2 "Russian Raiders"
+
+4. Press ALT+PAUSE to break into debugger BEFORE starting the scenario
+
+5. Set breakpoint on objective handler:
+   BP 6C2A7
+
+6. Continue:
+   F5
+
+7. When it breaks, examine what's being processed:
+   R           (show registers)
+   D SS:BP     (show stack frame with parameters)
+
+8. Step through with F10, watching for:
+   - When AL or BL register contains 0x1D (29 decimal)
+   - When code accesses memory with offsets 7, 11, or 17
+   - Any loop that counts or tests zones
+
+9. If you see zone processing, note the code address and:
+   U <address> L 30    (disassemble 30 bytes)
+
+10. Log everything:
+    LOG debug_output.txt
+    (then repeat steps and commands)
+
+═══════════════════════════════════════════════════════════════════════════
+WHAT TO LOOK FOR:
+═══════════════════════════════════════════════════════════════════════════
+
+Pattern A: Lookup table
+  mov al, 1D       ; load operand
+  mov bx, ax       ; use as index
+  mov al, [table+bx]   ; lookup
+
+Pattern B: Bit testing
+  mov al, 1D       ; load operand
+  test al, 01      ; test bit 0
+  test al, 02      ; test bit 1
+
+Pattern C: Arithmetic decoding
+  mov al, 1D       ; load operand
+  mov bl, 07       ; zone 7 appears
+  xor bl, al       ; XOR operation
+  mov bl, 0B       ; zone 11 appears
+
+Pattern D: Loop through zones
+  mov cx, 16       ; loop 22 times (zones)
+  mov al, 1D       ; operand
+  <loop testing each zone>
+
+═══════════════════════════════════════════════════════════════════════════
+SEND ME:
+═══════════════════════════════════════════════════════════════════════════
+
+1. Register dump when breakpoint hits (R command output)
+2. Stack dump (D SS:BP output)
+3. Disassembly of the code that processes operand 29
+4. Any values you see that look like zones 7, 11, or 17
+5. The complete log file if you create one
+
+═══════════════════════════════════════════════════════════════════════════
