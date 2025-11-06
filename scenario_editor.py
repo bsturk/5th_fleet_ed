@@ -526,6 +526,10 @@ class ScenarioEditorApp:
         self.decoded_objectives_text.tag_configure("red_bg", background="#ffebee")    # Light red
         self.decoded_objectives_text.tag_configure("green_header", background="#c8e6c9", font=("TkDefaultFont", 10, "bold"))
         self.decoded_objectives_text.tag_configure("red_header", background="#ffcdd2", font=("TkDefaultFont", 10, "bold"))
+        # Campaign and single-player colors
+        self.decoded_objectives_text.tag_configure("campaign_bg", background="#fff9e6")  # Light yellow/cream
+        self.decoded_objectives_text.tag_configure("campaign_header", background="#ffd700", font=("TkDefaultFont", 10, "bold"))
+        self.decoded_objectives_text.tag_configure("neutral_bg", background="#f0f0f0")  # Light gray
 
         self.decoded_objectives_text.config(state=tk.DISABLED)
 
@@ -547,6 +551,10 @@ class ScenarioEditorApp:
         tree.tag_configure("red_row", background="#ffebee")    # Light red
         tree.tag_configure("green_header_row", background="#c8e6c9")  # Darker green for PLAYER_SECTION(0x0d)
         tree.tag_configure("red_header_row", background="#ffcdd2")    # Darker red for PLAYER_SECTION(0x00)
+        # Campaign mode and single-player scenario colors
+        tree.tag_configure("campaign_row", background="#fff9e6")  # Light yellow/cream
+        tree.tag_configure("campaign_header_row", background="#ffd700", font=("TkDefaultFont", 9, "bold"))  # Gold
+        tree.tag_configure("neutral_row", background="#f0f0f0")  # Light gray for single-player
 
         tree.grid(row=2, column=0, sticky="nsew", padx=6, pady=4)
         tree.bind("<<TreeviewSelect>>", self._on_select_win_word)
@@ -1500,6 +1508,7 @@ class ScenarioEditorApp:
         end_zero_index = None
         has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
         has_explicit_green_marker = any(op == 0x01 and oper == 0x0d for op, oper in script)
+        has_campaign_marker = any(op == 0x01 and oper == 0xc0 for op, oper in script)
         for idx, (op, oper) in enumerate(script):
             if op == 0x00:
                 # Check if there are more opcodes after this END
@@ -1510,9 +1519,16 @@ class ScenarioEditorApp:
         # Populate tree with opcode details
         current_player = None  # Track which player context we're in
 
-        # For scenarios without any PLAYER_SECTION markers, default to Green before END, Red after
-        if not has_explicit_green_marker and not has_explicit_red_marker and end_zero_index is not None:
-            current_player = "Green"  # Default assumption for scenarios without markers
+        # Determine scenario type and set default coloring
+        if has_campaign_marker:
+            # Campaign mode - use campaign coloring throughout
+            current_player = "Campaign"
+        elif not has_explicit_green_marker and not has_explicit_red_marker:
+            # Single-player scenario (no player section markers) - use neutral coloring
+            current_player = "Neutral"
+        elif not has_explicit_green_marker and not has_explicit_red_marker and end_zero_index is not None:
+            # Legacy fallback for scenarios without markers
+            current_player = "Green"
 
         for idx, (opcode, operand) in enumerate(script):
             if opcode in OPCODE_MAP:
@@ -1535,6 +1551,9 @@ class ScenarioEditorApp:
                 elif operand == 0x00:
                     current_player = "Red"
                     tags = ("red_header_row",)
+                elif operand == 0xc0:
+                    current_player = "Campaign"
+                    tags = ("campaign_header_row",)
             elif opcode == 0x00 and end_zero_index is not None and idx == end_zero_index:
                 # END(any value) with more opcodes after it - treat as Red Player section separator
                 # This handles scenarios like #3 which use END(1) instead of END(0)
@@ -1547,6 +1566,10 @@ class ScenarioEditorApp:
                     tags = ("green_row",)
                 elif current_player == "Red":
                     tags = ("red_row",)
+                elif current_player == "Campaign":
+                    tags = ("campaign_row",)
+                elif current_player == "Neutral":
+                    tags = ("neutral_row",)
 
             self.win_tree.insert(
                 "",
@@ -1574,6 +1597,8 @@ class ScenarioEditorApp:
                 return "Green player objectives start (turn count at trailing_bytes[45])"
             elif operand == 0x00:
                 return "Red player objectives start"
+            elif operand == 0xc0:
+                return "Campaign mode scenario (single-player, special rules)"
             elif operand == 0xfe:
                 return "No turn limit (play until objectives complete)"
             else:
