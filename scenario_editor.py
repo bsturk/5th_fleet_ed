@@ -1089,13 +1089,20 @@ class ScenarioEditorApp:
     def _extract_base_name(self, base_rule_operand: int) -> Optional[str]:
         """Extract base/airfield name from pointer section 9 using BASE_RULE operand.
 
-        BASE_RULE mapping: operand → pointer_section_9[operand - 1] → base name
+        BASE_RULE mapping:
+        - operand 0: Special case (no specific base)
+        - operand >= 1: pointer_section_9[operand - 1] → base name
 
         Pointer section 9 contains null-terminated strings. We parse ALL strings
         (including single-char fragments) and index using (operand - 1).
         """
         if self.map_file is None:
             return None
+
+        # Special case: operand 0 means no specific base (seen in Scenario 1)
+        # Index 0 in pointer section 9 consistently contains garbage/padding
+        if base_rule_operand == 0:
+            return None  # Return None so caller displays generic message
 
         # Find pointer section 9
         pointer_section_9 = None
@@ -1247,6 +1254,53 @@ class ScenarioEditorApp:
         except Exception:
             # If anything goes wrong, return empty list
             return []
+
+    def _extract_bases_from_narrative(self) -> List[str]:
+        """Extract base/airfield names mentioned in narrative objectives text.
+
+        Searches the objectives text for patterns like:
+        - "destroy the airfield at X"
+        - "destroy the Russian airfields at X, Y, and Z"
+        - "airfield on X"
+
+        Returns list of base names found in objectives.
+        """
+        if not hasattr(self, 'scenario_record') or not self.scenario_record:
+            return []
+
+        objectives = self.scenario_record.objectives.lower()
+        bases = []
+
+        # Get all known base names from pointer section 9
+        known_bases = set()
+        if self.map_file:
+            for entry in self.map_file.pointer_entries:
+                if entry.index == 9:
+                    data = entry.data
+                    i = 0
+                    while i < len(data):
+                        if data[i] == 0:
+                            i += 1
+                            continue
+                        start = i
+                        while i < len(data) and data[i] != 0:
+                            i += 1
+                        try:
+                            string = data[start:i].decode('latin1', errors='replace')
+                            if len(string) >= 4 and string[0].isupper() and string.replace(' ', '').isalpha():
+                                known_bases.add(string)
+                        except:
+                            pass
+                        i += 1
+
+        # Search for each known base in the objectives text
+        for base in known_bases:
+            if base.lower() in objectives and base not in bases:
+                # Check if it's mentioned in context of airfield/base objective
+                if any(keyword in objectives for keyword in ['airfield', 'base', 'destroy']):
+                    bases.append(base)
+
+        return bases
 
     def _extract_convoy_ship_names(self) -> List[str]:
         """Extract convoy ship names from MAP pointer section 14.
@@ -1435,6 +1489,16 @@ class ScenarioEditorApp:
                 return f"Ships must reach port (index: {operand})"
 
         elif opcode == 0x0e:  # BASE_RULE
+            if operand == 0:
+                # BASE_RULE(0) means generic "engage enemy air facilities"
+                # Specific targets (if any) are in narrative text only
+                bases_in_narrative = self._extract_bases_from_narrative()
+                if bases_in_narrative:
+                    bases_str = ", ".join(bases_in_narrative)
+                    return f"Engage/destroy enemy air facilities: {bases_str}\n" \
+                           f"       (Extracted from narrative - not encoded in opcode)"
+                else:
+                    return "Engage/destroy enemy air facilities (no specific targets encoded)"
             base_name = self._extract_base_name(operand)
             if base_name:
                 return f"Airfield/base objective: {base_name}"

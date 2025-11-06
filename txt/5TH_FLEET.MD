@@ -125,10 +125,18 @@ SHARED/END:
 BASE_RULE(operand) → pointer_section_9[operand - 1] → base name string
 ```
 
+**Special Case - Operand 0:**
+- **BASE_RULE(0)** means "engage/destroy enemy air facilities" (generic directive)
+- Operand 0 does NOT map to a valid string index (would produce -1)
+- Index 0 in pointer section 9 consistently contains garbage/padding across all map files
+- Only appears in **Scenario 1 (Russian Raiders)** where Green objective is "destroy as many Russian units as possible"
+- Specific target bases (if any) are mentioned in narrative text only, not encoded in the opcode
+- Editor extracts base names from narrative text for display purposes
+
 **Key Findings:**
 - **Pointer Section 9** stores base/airfield names as null-terminated strings
 - The operand is NOT a direct string table index
-- Formula: `string_index = operand - 1`
+- Formula: `string_index = operand - 1` (for operand >= 1)
 - ALL null-terminated strings are counted (including single-character fragments)
 - Example: `BASE_RULE(5)` → index 4 in pointer section 9 → "Male Atoll"
 
@@ -136,12 +144,22 @@ BASE_RULE(operand) → pointer_section_9[operand - 1] → base name string
 | Scenario | Operand | Index | Base Name | Region | Status |
 |----------|---------|-------|-----------|--------|--------|
 | Maldives (0) | 5 | 4 | Male Atoll | 10 (Maldives) | ✓ VERIFIED |
+| Raiders (1) | 0 | N/A | (general/unspecified) | N/A | ✓ SPECIAL CASE |
+| Marines (19) | 9 | 8 | (garbage data) | N/A | ⚠ NEEDS REVIEW |
 
 **Technical Details:**
 - Pointer section 9 contains mixed data: base names interspersed with binary records
 - String parsing must include ALL null-terminated sequences, even garbage/fragments
 - This differs from pointer section 0, which uses (type, region_id) pairs
 - Base names appear multiple times in section 9 due to record structure
+- Index 0 is reserved/unused in all scenarios (contains non-printable data)
+
+**Multi-Target Base Objectives:**
+- Scenarios with multiple base destruction targets (e.g., Scenario 3: "destroy the red airfields at Socotra, Al Mukalla, and Aden") do NOT use BASE_RULE opcodes at all
+- Multi-target objectives exist ONLY in narrative text, not encoded in the objective script
+- The game relies on players reading the briefing text for specific targets
+- BASE_RULE is only used for single, critical base objectives (e.g., Scenario 1: destroy Male Atoll)
+- **No map file markers for objective bases** were found (unlike `0xfb 0x06` for objective ports)
 
 **Why not pointer section 15?** Initial investigation suggested pointer section 15, but that section contains adjacency/connectivity data, not base names. The actual base name table is in **pointer section 9**.
 
