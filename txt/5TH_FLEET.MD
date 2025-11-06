@@ -254,6 +254,32 @@ When implementing a scenario editor:
 
 Ports in map files are stored in a fixed-size array starting around offset 0x0600-0x0900. Each port entry is 70 bytes (0x46). Port indices used in `SHIP_DEST` and `CONVOY_PORT` opcodes reference this array with varying formulas (operand, operand-1, or operand-2 depending on context).
 
+**Implementation in Scenario Editor:**
+
+The scenario editor (`scenario_editor.py`) now includes automatic objective port detection:
+
+1. **New method:** `_extract_objective_ports()` (lines 1196-1249)
+   - Scans raw map file data for `fb 06` byte pattern
+   - Extracts port names appearing 10-22 bytes after each marker
+   - Returns list of objective port names (e.g., `["Aden", "Al Mukalla", "Ras Karma"]`)
+
+2. **Updated opcode handlers:**
+   - `CONVOY_RULE` (0x04) handler (lines 1724-1734) - Detects and displays objective ports from map file
+   - `SPECIAL_RULE` (0x05) with operand 6 handler (lines 1570-1610) - Shows objective ports when no explicit CONVOY_PORT/SHIP_DEST in script
+
+3. **Display output:**
+   ```
+   ═══ RED PLAYER OBJECTIVES ═══
+   • Ships must reach: Aden, Al Mukalla, Ras Karma
+       (Objective ports marked in map file with SHIP_DEST(251))
+   • Victory points: Destroy as many enemy units as possible
+       (VP reference: 51 - see narrative text for specifics)
+   ```
+
+This enhancement ensures the editor displays complete objective information even when port destinations are stored in map files rather than scenario scripts. The implementation correctly handles Scenario 2 and other scenarios using the CONVOY_RULE or SPECIAL_RULE(6) system.
+
+**See also:** `docs/operand_investigation.md` for the full investigation trail that led to this discovery.
+
 #### Turn Count Storage - DISCOVERED! (2025-01-04)
 
 **BREAKTHROUGH:** After extensive disassembly analysis and data file investigation, the turn count storage location has been found!
