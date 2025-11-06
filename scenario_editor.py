@@ -46,30 +46,51 @@ except ImportError:  # pragma: no cover - ttk is bundled with Tk in CPython.
 
 
 # Opcode decoder ring from reverse engineering
+# Note: Many opcodes are not yet fully decoded - marked as UNKNOWN_XX
 OPCODE_MAP = {
     0x00: ("END", "Region index", "End-of-script / victory check for region"),
     0x01: ("PLAYER_SECTION", "Side marker", "Player objective delimiter (0x0d=Green, 0x00=Red) - turn count stored at trailing_bytes[45]"),
+    0x02: ("UNKNOWN_02", "?", "Unknown opcode (scenarios 11, 22)"),
     0x03: ("SCORE", "VP ref", "Victory point objective"),
     0x04: ("CONVOY_RULE", "Flags", "Convoy delivery rule flags"),
     0x05: ("SPECIAL_RULE", "Code", "Special engagement rule"),
     0x06: ("SHIP_DEST", "Port idx", "Ships must reach port"),
-    0x07: ("UNKNOWN_07", "?", "Unknown (used in setup)"),
-    0x08: ("UNKNOWN_08", "?", "Unknown"),
+    0x07: ("UNKNOWN_07", "?", "Unknown (used in setup, scenarios 5,6,10,15)"),
+    0x08: ("UNKNOWN_08", "?", "Unknown (scenarios 15,17,23)"),
     0x09: ("ZONE_CONTROL", "Zone idx", "Zone must be controlled/occupied"),
     0x0a: ("ZONE_CHECK", "Zone idx", "Check zone status"),
+    0x0b: ("UNKNOWN_0B", "?", "Unknown (scenarios 14, 18)"),
     0x0c: ("TASK_FORCE", "TF ref", "Task force objective"),
     0x0e: ("BASE_RULE", "Base ID", "Airfield/base objective"),
-    0x0f: ("UNKNOWN_0F", "?", "Unknown"),
+    0x0f: ("UNKNOWN_0F", "?", "Unknown (scenarios 18, 21)"),
+    0x10: ("UNKNOWN_10", "?", "Unknown (scenario 17)"),
+    0x11: ("UNKNOWN_11", "?", "Unknown (scenario 16)"),
     0x13: ("PORT_RESTRICT", "Flags", "Replenishment port restrictions"),
+    0x14: ("UNKNOWN_14", "?", "Unknown (scenarios 8, 14)"),
+    0x17: ("UNKNOWN_17", "?", "Unknown (scenarios 16, 23)"),
     0x18: ("CONVOY_PORT", "Port idx", "Convoy destination port"),
+    0x19: ("UNKNOWN_19", "?", "Unknown (scenario 14)"),
     0x1d: ("SHIP_OBJECTIVE", "Ship type", "Ship-specific objective"),
+    0x1e: ("UNKNOWN_1E", "?", "Unknown (scenarios 10, 15)"),
+    0x20: ("UNKNOWN_20", "?", "Unknown (scenario 20)"),
+    0x23: ("UNKNOWN_23", "?", "Unknown (scenarios 9, 19)"),
+    0x26: ("UNKNOWN_26", "?", "Unknown (scenario 17)"),
     0x29: ("REGION_RULE", "Region idx", "Region-based victory rule"),
+    0x2b: ("UNKNOWN_2B", "?", "Unknown (scenarios 5, 6)"),
     0x2d: ("ALT_TURNS", "Turn count", "Alternate turn limit (some scenarios use this)"),
+    0x30: ("UNKNOWN_30", "?", "Unknown (scenario 18)"),
+    0x34: ("UNKNOWN_34", "?", "Unknown (scenario 23)"),
+    0x35: ("UNKNOWN_35", "?", "Unknown (scenario 8)"),
     0x3a: ("CONVOY_FALLBACK", "List ref", "Fallback port list"),
     0x3c: ("DELIVERY_CHECK", "Flags", "Delivery success/failure check"),
     0x3d: ("PORT_LIST", "List idx", "Port list (multi-destination)"),
     0x41: ("FLEET_POSITION", "?", "Fleet positioning requirement"),
+    0x5a: ("UNKNOWN_5A", "?", "Unknown (scenario 22)"),
+    0x5f: ("UNKNOWN_5F", "?", "Unknown (scenario 8)"),
     0x6d: ("SUPPLY_LIMIT", "Port mask", "Supply port restrictions"),
+    0x6e: ("UNKNOWN_6E", "?", "Unknown (scenario 12)"),
+    0x86: ("UNKNOWN_86", "?", "Unknown (scenario 9)"),
+    0x96: ("UNKNOWN_96", "?", "Unknown (scenario 21)"),
     0xbb: ("ZONE_ENTRY", "Zone idx", "Zone entry requirement"),
 }
 
@@ -1472,8 +1493,10 @@ class ScenarioEditorApp:
 
         # Pre-scan to find END opcode as potential section separator
         # This can be END(0), END(1), or any END with opcodes after it
+        # Example: Scenario 5 has TURNS(0x0d), objectives, END(0), more objectives
         end_zero_index = None
         has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
+        has_explicit_green_marker = any(op == 0x01 and oper == 0x0d for op, oper in script)
         for idx, (op, oper) in enumerate(script):
             if op == 0x00:
                 # Check if there are more opcodes after this END
@@ -1483,6 +1506,11 @@ class ScenarioEditorApp:
 
         # Populate tree with opcode details
         current_player = None  # Track which player context we're in
+
+        # For scenarios without any PLAYER_SECTION markers, default to Green before END, Red after
+        if not has_explicit_green_marker and not has_explicit_red_marker and end_zero_index is not None:
+            current_player = "Green"  # Default assumption for scenarios without markers
+
         for idx, (opcode, operand) in enumerate(script):
             if opcode in OPCODE_MAP:
                 mnemonic, op_type, _ = OPCODE_MAP[opcode]
@@ -1731,6 +1759,7 @@ class ScenarioEditorApp:
         has_convoy_port = any(op == 0x18 for op, oper in script)
         has_ship_dest = any(op == 0x06 for op, oper in script)
         has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
+        has_explicit_green_marker = any(op == 0x01 and oper == 0x0d for op, oper in script)
 
         # Pre-scan to find END opcode as potential section separator
         # This can be END(0), END(1), or any END with opcodes after it
@@ -1741,6 +1770,10 @@ class ScenarioEditorApp:
                 if idx + 1 < len(script):
                     end_zero_index = idx
                 break
+
+        # For scenarios without any PLAYER_SECTION markers, default to Green before END, Red after
+        if not has_explicit_green_marker and not has_explicit_red_marker and end_zero_index is not None:
+            current_player = "Green"
 
         for idx, (opcode, operand) in enumerate(script):
             if opcode == 0x01:  # PLAYER_SECTION - player objective delimiter
@@ -1983,6 +2016,7 @@ class ScenarioEditorApp:
         has_convoy_port = any(op == 0x18 for op, oper in script)
         has_ship_dest = any(op == 0x06 for op, oper in script)
         has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
+        has_explicit_green_marker = any(op == 0x01 and oper == 0x0d for op, oper in script)
 
         # Pre-scan to find END opcode as potential section separator
         # This can be END(0), END(1), or any END with opcodes after it
@@ -1993,6 +2027,11 @@ class ScenarioEditorApp:
                 if idx + 1 < len(script):
                     end_zero_index = idx
                 break
+
+        # For scenarios without any PLAYER_SECTION markers, default to Green before END, Red after
+        if not has_explicit_green_marker and not has_explicit_red_marker and end_zero_index is not None:
+            current_player = "Green"
+            current_bg_tag = "green_bg"
 
         for idx, (opcode, operand) in enumerate(script):
             if opcode == 0x01:  # PLAYER_SECTION - player objective delimiter
