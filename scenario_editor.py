@@ -1077,12 +1077,15 @@ class ScenarioEditorApp:
             zone_names = [self._region_name(z) for z in zones]
 
             # Different opcodes imply different logical relationships
+            # All three scenarios use OR logic based on narrative text:
+            # Scenario 2: "reach Aden, Al Mukalla, or Ras Karma" (OR)
+            # Scenario 3: "occupy Gulf of Oman... Failing that, occupy either North Arabian Sea or South Arabian Sea" (OR)
             if opcode == 0x0A:  # ZONE_CHECK - checking presence/entry
                 return f"{zone_names[0]} OR {zone_names[1]} OR {zone_names[2]}"
             elif opcode == 0x09:  # ZONE_CONTROL - checking occupation
-                return f"{zone_names[0]} AND {zone_names[1]} AND {zone_names[2]}"
+                return f"{zone_names[0]} OR {zone_names[1]} OR {zone_names[2]}"
             elif opcode == 0xBB:  # ZONE_ENTRY - checking entry requirement
-                return f"{zone_names[0]}, {zone_names[1]}, {zone_names[2]}"
+                return f"{zone_names[0]} OR {zone_names[1]} OR {zone_names[2]}"
 
         return None
 
@@ -1366,12 +1369,13 @@ class ScenarioEditorApp:
         if hasattr(self, "decoded_objectives_text"):
             self._render_decoded_objectives(script, record)
 
-        # Pre-scan to find END(0) as potential section separator
+        # Pre-scan to find END opcode as potential section separator
+        # This can be END(0), END(1), or any END with opcodes after it
         end_zero_index = None
         has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
         for idx, (op, oper) in enumerate(script):
-            if op == 0x00 and oper == 0x00:
-                # Check if there are more opcodes after this END(0)
+            if op == 0x00:
+                # Check if there are more opcodes after this END
                 if idx + 1 < len(script):
                     end_zero_index = idx
                 break
@@ -1399,8 +1403,9 @@ class ScenarioEditorApp:
                 elif operand == 0x00:
                     current_player = "Red"
                     tags = ("red_header_row",)
-            elif opcode == 0x00 and operand == 0x00 and end_zero_index is not None and idx == end_zero_index:
-                # END(0) with more opcodes after it - treat as Red Player section separator
+            elif opcode == 0x00 and end_zero_index is not None and idx == end_zero_index:
+                # END(any value) with more opcodes after it - treat as Red Player section separator
+                # This handles scenarios like #3 which use END(1) instead of END(0)
                 if not has_explicit_red_marker and current_player == "Green":
                     current_player = "Red"
                     # Don't apply tags to the delimiter itself
@@ -1458,6 +1463,8 @@ class ScenarioEditorApp:
         elif opcode == 0x0c:  # TASK_FORCE
             if operand == 0xfe:
                 return "All task forces must survive"
+            elif operand == 0x00:
+                return "Task force objective (no specific task force)"
             else:
                 return f"Task force survival/destination (ref: {operand})"
 
@@ -1624,11 +1631,12 @@ class ScenarioEditorApp:
         has_ship_dest = any(op == 0x06 for op, oper in script)
         has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
 
-        # Pre-scan to find END(0) as potential section separator
+        # Pre-scan to find END opcode as potential section separator
+        # This can be END(0), END(1), or any END with opcodes after it
         end_zero_index = None
         for idx, (op, oper) in enumerate(script):
-            if op == 0x00 and oper == 0x00:
-                # Check if there are more opcodes after this END(0)
+            if op == 0x00:
+                # Check if there are more opcodes after this END
                 if idx + 1 < len(script):
                     end_zero_index = idx
                 break
@@ -1704,6 +1712,8 @@ class ScenarioEditorApp:
             elif opcode == 0x0c:  # TASK_FORCE
                 if operand == 0xfe:
                     lines.append("• All task forces must survive")
+                elif operand == 0x00:
+                    lines.append("• Task force objective (no specific task force reference)")
                 else:
                     lines.append(f"• Task force must survive/reach destination (ref: {operand})")
 
@@ -1722,13 +1732,14 @@ class ScenarioEditorApp:
                 lines.append(f"• Control or occupy {region_name}")
 
             elif opcode == 0x00:  # END
-                if operand == 0 and end_zero_index is not None and idx == end_zero_index:
-                    # END(0) with more opcodes after it - treat as Red Player section separator
+                if end_zero_index is not None and idx == end_zero_index:
+                    # END(any value) with more opcodes after it - treat as Red Player section separator
+                    # This handles scenarios like #3 which use END(1) instead of END(0)
                     if not has_explicit_red_marker and current_player == "Green":
                         lines.append("")
                         lines.append("═══ RED PLAYER OBJECTIVES ═══")
                         current_player = "Red"
-                    # Don't display END(0) as a victory check when it's a section separator
+                    # Don't display END as a victory check when it's a section separator
                 elif operand > 0:
                     region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
                     lines.append(f"• Victory check region: {region_name}")
@@ -1869,11 +1880,12 @@ class ScenarioEditorApp:
         has_ship_dest = any(op == 0x06 for op, oper in script)
         has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
 
-        # Pre-scan to find END(0) as potential section separator
+        # Pre-scan to find END opcode as potential section separator
+        # This can be END(0), END(1), or any END with opcodes after it
         end_zero_index = None
         for idx, (op, oper) in enumerate(script):
-            if op == 0x00 and oper == 0x00:
-                # Check if there are more opcodes after this END(0)
+            if op == 0x00:
+                # Check if there are more opcodes after this END
                 if idx + 1 < len(script):
                     end_zero_index = idx
                 break
@@ -1970,6 +1982,8 @@ class ScenarioEditorApp:
                 start_pos = text_widget.index(tk.INSERT)
                 if operand == 0xfe:
                     text_widget.insert(tk.END, "• All task forces must survive\n")
+                elif operand == 0x00:
+                    text_widget.insert(tk.END, "• Task force objective (no specific task force reference)\n")
                 else:
                     text_widget.insert(tk.END, f"• Task force must survive/reach destination (ref: {operand})\n")
                 if current_bg_tag:
