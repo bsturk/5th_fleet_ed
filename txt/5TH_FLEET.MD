@@ -301,6 +301,121 @@ Campaign scenarios use a distinct pattern:
 
 ---
 
+## Disassembly Analysis (2025-01-06)
+
+### Objective Evaluation vs. Setup Opcodes
+
+**Critical Discovery:** Analysis of `Fleet.exe` disassembly reveals that opcodes are processed by **two separate systems**:
+
+#### System 1: Runtime Objective Evaluation (Opcodes 0x00-0x0f)
+
+Three functions evaluate objectives during gameplay:
+
+1. **sub_6C2A7** (ovr140:0AD7)
+   - Jump table: `off_6C907` (17 entries)
+   - Range check: `cmp bx, 10h; jbe loc_6C2EE`
+   - Handles opcodes 0x00-0x0f
+   - Fallthrough → `loc_6C8C4` → prints "Unknown Objective Type %d"
+
+2. **sub_6C929** (ovr140:1159)
+   - Jump table: `off_6D627` (17 entries) + 4 nested tables
+   - Same range check: `cmp bx, 10h`
+   - Handles opcodes 0x00-0x0f
+
+3. **sub_6D7C4** (ovr140:2000+)
+   - Jump table: `off_6DE26` (15 entries)
+   - Range check: `dec ax; cmp bx, 0Eh` (handles 0x01-0x0f)
+
+**Key Finding:** When these functions encounter opcode >= 0x10, they jump to error handler and print "Unknown Objective Type %d". This is NOT an error in the scenario data - **opcodes 0x10+ are intentionally not handled by objective evaluation functions.**
+
+#### System 2: Scenario Setup/Initialization (Opcodes 0x10+)
+
+Opcodes 0x10-0xbb are processed during scenario load/initialization, NOT during objective evaluation. They set global parameters, victory conditions, and scenario-specific flags.
+
+**Evidence-Based Classification:**
+
+| Opcode Range | Function | Evaluation System | Usage Pattern |
+|--------------|----------|-------------------|---------------|
+| 0x00-0x0f | Runtime objectives | Objective evaluators | Checked every turn during gameplay |
+| 0x10-0xbb | Setup parameters | Scenario initializer | Processed once during scenario load |
+
+**Why "Unknown Objective Type" Errors Don't Appear:**
+- Scenario setup opcodes (0x10+) are consumed during initialization
+- Only opcodes 0x00-0x0f reach the objective evaluation functions
+- The editor previously incorrectly assumed ALL opcodes should be valid objectives
+
+### Opcode System Architecture
+
+```
+Scenario Load:
+  ┌─────────────────────────────────────┐
+  │ Read objective script from          │
+  │ trailing_bytes[45+]                 │
+  └───────────────┬─────────────────────┘
+                  │
+                  ▼
+         ┌────────────────────┐
+         │ Process opcodes    │
+         │ 0x10+ for setup    │
+         └────────┬───────────┘
+                  │
+                  ▼
+         ┌────────────────────┐
+         │ Store opcodes      │
+         │ 0x00-0x0f for      │
+         │ runtime evaluation │
+         └────────┬───────────┘
+                  │
+Gameplay:         ▼
+         ┌────────────────────┐
+         │ Evaluate objectives│
+         │ using 0x00-0x0f    │
+         │ (sub_6C2A7, etc.)  │
+         └────────────────────┘
+```
+
+### Position-Dependent Opcode Behavior
+
+Based on scenario analysis and disassembly findings:
+
+**First Position Opcodes** (Scenario initialization):
+- **0x07, 0x0a-0x14, 0x17**: Campaign turn parameters
+  - Small operands (5-12): Likely turn number, starting region, or difficulty
+  - Example: Campaign Turn 1 starts with `0x14(9)`
+- **0x2d**: ALT_TURNS - Alternate turn count (operand = actual turn count)
+- **0x6d(117)**: SUPPLY_LIMIT trigger - Enables special 6-opcode supply restriction pattern
+
+**Middle Position Opcodes** (Feature flags):
+- **0x07(0), 0x08(0), 0x0b(0)**: Boolean flags (always operand 0)
+- Appear after END or PLAYER_SECTION
+- Likely enable/disable scenario features (e.g., weather, supply restrictions, etc.)
+
+**Last Position Opcodes** (Victory modifiers):
+- **0x1e, 0x20, 0x23, 0x26, 0x2b, 0x30, 0x34, 0x5f, 0x86**: Never evaluated as objectives
+- Large operands (9-98) encode parameters
+- **Hypothesis:** Victory point thresholds, scoring multipliers, time bonuses, or difficulty adjustments
+- Processed during scenario load, stored as global victory condition parameters
+
+### Updated Decoding Status
+
+| Opcode | Status | Evidence | Function Type |
+|--------|--------|----------|---------------|
+| 0x00-0x06 | **VERIFIED** | Disassembly jump tables | Runtime objective |
+| 0x07 | **PARTIALLY DECODED** | Position-dependent: setup (first) or flag (middle) | Dual-purpose |
+| 0x08 | **INFERRED** | Always operand 0, middle position | Setup flag |
+| 0x09-0x0e | **VERIFIED** | Jump table handlers | Runtime objective |
+| 0x0f | **UNDECODED** | Not in jump tables | Setup parameter |
+| 0x10-0x17 | **INFERRED** | Campaign first-position, small operands | Campaign turn init |
+| 0x18-0x29 | **PARTIALLY DECODED** | Some in tables (0x18, 0x1d, 0x29) | Mixed |
+| 0x2b-0xbb | **INFERRED** | Pattern analysis only | Setup/victory modifiers |
+
+**Confidence Levels:**
+- **VERIFIED**: Confirmed in disassembly with handler code
+- **PARTIALLY DECODED**: Handler exists OR clear usage pattern
+- **INFERRED**: Pattern analysis only, no disassembly confirmation
+
+---
+
 #### BASE_RULE Opcode Base ID System (DECODED!)
 
 **Discovery (2025-01-05):** The BASE_RULE (0x0e) opcode uses a unique indirection system to reference airfield/base names:
