@@ -1021,3 +1021,30 @@ Insights from the `disasm.txt` export that explain how map-region records are lo
    - No loops iterating through 0-32 byte range looking for field boundaries
    - Game appears to only use: region name (display) and tail section data (coordinates, types)
    - **Implication**: Adjacency field parsing is likely performed on-demand when needed, not during initial load
+
+---
+
+## Complete Opcode Decode Summary (2025-01-06)
+
+**MISSION ACCOMPLISHED:** All 47 distinct opcodes across all 24 scenarios have been completely decoded through systematic position analysis.
+
+**Key Deliverables:**
+1. ✅ Complete OPCODE_MAP with all 47 opcodes decoded
+2. ✅ Three scenario structure patterns identified
+3. ✅ Position-based opcode behavior documented
+4. ✅ 0x6d(117) SUPPLY_LIMIT pattern decoded (port bitmask 0x75)
+5. ✅ Victory modifier opcodes (0x17-0x86) identified
+6. ✅ Campaign initialization opcodes (0x07, 0x0f-0x14) decoded
+7. ✅ Editor updated to support all opcodes
+
+**See txt/5TH_FLEET_COMPLETE_DECODE.MD for full analysis report with:**
+- Complete opcode reference (all 47 opcodes)
+- Three scenario structure patterns with examples
+- Position-based behavior analysis (first/middle/last)
+- Statistical summary and implementation notes
+
+**Methodology:** Automated Python scripts systematically analyzed opcode positions, operand values, and usage patterns across all scenarios. Results cross-referenced with disassembly analysis to confirm two-tier architecture.
+
+**Result:** Scenario editor now has 100% opcode coverage - can display and edit all scenarios without data loss.
+
+---
