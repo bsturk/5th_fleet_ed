@@ -48,7 +48,7 @@ except ImportError:  # pragma: no cover - ttk is bundled with Tk in CPython.
 # Opcode decoder ring from reverse engineering
 OPCODE_MAP = {
     0x00: ("END", "Region index", "End-of-script / victory check for region"),
-    0x01: ("TURNS", "Side marker", "Player objective delimiter (0x0d=Green, 0x00=Red)"),
+    0x01: ("PLAYER_SECTION", "Side marker", "Player objective delimiter (0x0d=Green, 0x00=Red) - turn count stored at trailing_bytes[45]"),
     0x03: ("SCORE", "VP ref", "Victory point objective"),
     0x04: ("CONVOY_RULE", "Flags", "Convoy delivery rule flags"),
     0x05: ("SPECIAL_RULE", "Code", "Special engagement rule"),
@@ -493,8 +493,8 @@ class ScenarioEditorApp:
         # Configure tags for player-specific row coloring
         tree.tag_configure("green_row", background="#e8f5e9")  # Light green
         tree.tag_configure("red_row", background="#ffebee")    # Light red
-        tree.tag_configure("green_header_row", background="#c8e6c9")  # Darker green for TURNS(0x0d)
-        tree.tag_configure("red_header_row", background="#ffcdd2")    # Darker red for TURNS(0x00)
+        tree.tag_configure("green_header_row", background="#c8e6c9")  # Darker green for PLAYER_SECTION(0x0d)
+        tree.tag_configure("red_header_row", background="#ffcdd2")    # Darker red for PLAYER_SECTION(0x00)
 
         tree.grid(row=1, column=0, sticky="nsew", padx=6, pady=4)
         tree.bind("<<TreeviewSelect>>", self._on_select_win_word)
@@ -1394,9 +1394,9 @@ class ScenarioEditorApp:
             # Decode the actual description based on opcode and operand value
             description = self._decode_opcode_description(opcode, operand)
 
-            # Determine row color based on TURNS opcode and current player context
+            # Determine row color based on PLAYER_SECTION opcode and current player context
             tags = ()
-            if opcode == 0x01:  # TURNS opcode
+            if opcode == 0x01:  # PLAYER_SECTION opcode
                 if operand == 0x0d:
                     current_player = "Green"
                     tags = ("green_header_row",)
@@ -1410,7 +1410,7 @@ class ScenarioEditorApp:
                     current_player = "Red"
                     # Don't apply tags to the delimiter itself
             else:
-                # Apply player-specific background to non-TURNS opcodes
+                # Apply player-specific background to non-PLAYER_SECTION opcodes
                 if current_player == "Green":
                     tags = ("green_row",)
                 elif current_player == "Red":
@@ -1437,9 +1437,9 @@ class ScenarioEditorApp:
         This decodes the actual meaning based on the operand value, not just the
         generic opcode description.
         """
-        if opcode == 0x01:  # TURNS
+        if opcode == 0x01:  # PLAYER_SECTION
             if operand == 0x0d:
-                return "Green player objectives start"
+                return "Green player objectives start (turn count at trailing_bytes[45])"
             elif operand == 0x00:
                 return "Red player objectives start"
             elif operand == 0xfe:
@@ -1481,9 +1481,9 @@ class ScenarioEditorApp:
         elif opcode == 0x00:  # END
             if operand > 0:
                 region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
-                return f"Victory check: {region_name}"
+                return f"Victory check: {region_name} (END also acts as section separator if more opcodes follow)"
             else:
-                return "End of script"
+                return "End of script / Section separator (END(0) = no specific victory region)"
 
         elif opcode == 0x03:  # SCORE
             return f"Victory points objective (ref: {operand})"
@@ -1642,7 +1642,7 @@ class ScenarioEditorApp:
                 break
 
         for idx, (opcode, operand) in enumerate(script):
-            if opcode == 0x01:  # TURNS - player objective delimiter
+            if opcode == 0x01:  # PLAYER_SECTION - player objective delimiter
                 found_turns_01 = True
                 if operand == 0x0d:
                     lines.append("")
@@ -1739,7 +1739,10 @@ class ScenarioEditorApp:
                         lines.append("")
                         lines.append("═══ RED PLAYER OBJECTIVES ═══")
                         current_player = "Red"
-                    # Don't display END as a victory check when it's a section separator
+                    # When END is a section separator, optionally show victory region
+                    if operand > 0:
+                        region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                        lines.append(f"    [Victory check region: {region_name}]")
                 elif operand > 0:
                     region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
                     lines.append(f"• Victory check region: {region_name}")
@@ -1891,7 +1894,7 @@ class ScenarioEditorApp:
                 break
 
         for idx, (opcode, operand) in enumerate(script):
-            if opcode == 0x01:  # TURNS - player objective delimiter
+            if opcode == 0x01:  # PLAYER_SECTION - player objective delimiter
                 if operand == 0x0d:
                     # Green player section
                     current_player = "Green"
@@ -1919,7 +1922,7 @@ class ScenarioEditorApp:
                         text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
                 else:
                     start_pos = text_widget.index(tk.INSERT)
-                    text_widget.insert(tk.END, f"• Turn limit marker: {operand}\n")
+                    text_widget.insert(tk.END, f"• Player section marker (operand: {operand})\n")
                     if current_bg_tag:
                         text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
@@ -2007,8 +2010,9 @@ class ScenarioEditorApp:
                     text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
 
             elif opcode == 0x00:  # END
-                if operand == 0 and end_zero_index is not None and idx == end_zero_index:
-                    # END(0) with more opcodes after it - treat as Red Player section separator
+                if end_zero_index is not None and idx == end_zero_index:
+                    # END(any value) with more opcodes after it - treat as Red Player section separator
+                    # This handles scenarios like #3 which use END(1) instead of END(0)
                     if not has_explicit_red_marker and current_player == "Green":
                         current_player = "Red"
                         current_bg_tag = "red_bg"
@@ -2017,7 +2021,13 @@ class ScenarioEditorApp:
                         text_widget.insert(tk.END, "═══ RED PLAYER OBJECTIVES ═══\n")
                         end_pos = text_widget.index(tk.INSERT)
                         text_widget.tag_add("red_header", start_pos, end_pos)
-                    # Don't display END(0) as a victory check when it's a section separator
+                    # When END is a section separator, optionally show victory region
+                    if operand > 0:
+                        start_pos = text_widget.index(tk.INSERT)
+                        region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
+                        text_widget.insert(tk.END, f"    [Victory check region: {region_name}]\n")
+                        if current_bg_tag:
+                            text_widget.tag_add(current_bg_tag, start_pos, text_widget.index(tk.INSERT))
                 elif operand > 0:
                     start_pos = text_widget.index(tk.INSERT)
                     region_name = self._region_name(operand) if self.map_file and operand < len(self.map_file.regions) else f"region {operand}"
@@ -2226,9 +2236,9 @@ class ScenarioEditorApp:
         if record is None:
             return
 
-        # Add a new TURNS(0) opcode as default
+        # Add a new PLAYER_SECTION(0) opcode as default
         script = self._parse_objective_script(record.trailing_bytes)
-        script.append((0x01, 0x00))  # TURNS(0) = unlimited
+        script.append((0x01, 0x00))  # PLAYER_SECTION(0) = Red player section
 
         # Encode back, preserving metadata
         record.trailing_bytes = self._encode_objective_script(record.trailing_bytes, script)
