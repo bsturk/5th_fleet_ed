@@ -1214,8 +1214,10 @@ class ScenarioEditorApp:
             if template_records and 0 <= unit.template_id < len(template_records):
                 template = template_records[unit.template_id]
                 name_display = template.name
-                if template.icon_index is not None:
-                    name_display = f"{template.name} (#{template.icon_index})"
+                # Get the effective icon index (including default for submarines)
+                effective_icon = self._template_icon_index(unit_table.kind, unit.template_id)
+                if effective_icon is not None:
+                    name_display = f"{template.name} (#{effective_icon})"
             else:
                 template = None
                 max_id = len(template_records) - 1 if template_records else 0
@@ -2741,7 +2743,12 @@ class ScenarioEditorApp:
             using_templates = []
             for kind in ["air", "surface", "sub"]:
                 for template in self._template_records(kind):
-                    if template.icon_index == icon.index:
+                    # Check if template uses this icon directly, or if it's a submarine using default icon 45
+                    uses_icon = template.icon_index == icon.index
+                    if not uses_icon and kind == "sub" and template.icon_index is None and icon.index == 45:
+                        uses_icon = True
+
+                    if uses_icon:
                         using_templates.append(f"{template.name[:8]}")
                         if len(using_templates) >= 2:  # Limit display
                             break
@@ -2800,7 +2807,12 @@ class ScenarioEditorApp:
     def _template_icon_index(self, kind: str, template_id: int) -> Optional[int]:
         records = self._template_records(kind)
         if 0 <= template_id < len(records):
-            return records[template_id].icon_index
+            icon_index = records[template_id].icon_index
+            # Submarines don't have individual icon assignments in the template file
+            # Use icon 45 as the default submarine icon (icons 41-65 are unused by air/surface)
+            if icon_index is None and kind == "sub":
+                return 45
+            return icon_index
         return None
 
     def _update_unit_icon_preview(self, kind: str, unit: UnitRecord) -> None:

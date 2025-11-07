@@ -900,7 +900,7 @@ The coordinate system varies by scenario and may use different scales or encodin
 - `TRMAIR.DAT`, `TRMSRF.DAT`, `TRMSUB.DAT`: Unit templates (counts followed by fixed-size records containing name, nationality code, stats, and weapon references). Needed to interpret per-scenario unit placements. Each record also carries the tactical chit index used in `MICONRES.RES`:
   - Air (`TRMAIR.DAT`): byte @ offset `0x21` (33) → icon id.
   - Surface (`TRMSRF.DAT`): word @ offset `0x72` (114) → icon id (low byte).
-  - Submarine (`TRMSUB.DAT`): byte @ offset `0x1A` (26) → icon id.
+  - Submarine (`TRMSUB.DAT`): **No individual icon assignment** - byte 26 previously documented was actually part of weapon name text field. Submarines use default icon index 45 (icons 41-65 appear to be reserved for submarines).
 - `REFER.DAT`: Lookup tables for terrain keywords (`SHAL`, `DEEP`), country abbreviations (`KKIN`, `KKUS`, etc.), weapon names (`Harpoon`, `SS-N-19`) and other shared strings.
 - Graphics/UI assets:
   - Strategic maps: `MAPVER20.PCX` (2861×2126 full board) and `SMALLMP.PCX` (89×66 strategic thumbnail) in `game/`.
