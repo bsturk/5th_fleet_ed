@@ -2742,10 +2742,11 @@ class ScenarioEditorApp:
             # Try to find which templates use this icon
             using_templates = []
             for kind in ["air", "surface", "sub"]:
-                for template in self._template_records(kind):
-                    # Check if template uses this icon directly, or if it's a submarine using default icon 45
+                for idx, template in enumerate(self._template_records(kind)):
+                    # Check if template uses this icon
                     uses_icon = template.icon_index == icon.index
-                    if not uses_icon and kind == "sub" and template.icon_index is None and icon.index == 45:
+                    # Submarines use sequential icons: icon = 41 + template_id
+                    if not uses_icon and kind == "sub" and template.icon_index is None and icon.index == 41 + idx:
                         uses_icon = True
 
                     if uses_icon:
@@ -2808,10 +2809,10 @@ class ScenarioEditorApp:
         records = self._template_records(kind)
         if 0 <= template_id < len(records):
             icon_index = records[template_id].icon_index
-            # Submarines don't have individual icon assignments in the template file
-            # Use icon 45 as the default submarine icon (icons 41-65 are unused by air/surface)
+            # Submarines don't have icon index stored in template file
+            # They use sequential icons starting at 41: icon = 41 + template_id
             if icon_index is None and kind == "sub":
-                return 45
+                return 41 + template_id
             return icon_index
         return None
 
