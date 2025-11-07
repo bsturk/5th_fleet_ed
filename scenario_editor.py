@@ -2858,7 +2858,14 @@ class ScenarioEditorApp:
         key = (icon_index, side)
         if key not in self.icon_photo_cache:
             icon = self.icon_library[icon_index]
-            image = icon.render_image(side=side, scale=4)
+
+            # Calculate scale to normalize icon display size
+            # Target is 104 pixels (26x26 at scale 4), use max dimension to determine scale
+            target_size = 104
+            max_dimension = max(icon.width, icon.height)
+            scale = max(1, round(target_size / max_dimension))
+
+            image = icon.render_image(side=side, scale=scale)
             self.icon_photo_cache[key] = ImageTk.PhotoImage(image)
         return self.icon_photo_cache[key]
 
