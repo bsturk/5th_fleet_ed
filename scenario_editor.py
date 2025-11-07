@@ -2012,6 +2012,40 @@ class ScenarioEditorApp:
 
         return "\n".join(lines)
 
+    def _parse_player_objectives(self, objectives_text: str) -> Dict[str, str]:
+        """Extract Green and Red player objectives from narrative text.
+
+        For scenarios 5-23, the objectives text contains 'Green Player:' and 'Red Player:'
+        sections that describe player-specific objectives. This function parses them out.
+
+        Returns:
+            Dict with 'green' and 'red' keys containing the respective objective text.
+        """
+        import re
+
+        green_objectives = ""
+        red_objectives = ""
+
+        # Look for "Green Player:" and "Red Player:" markers (case-insensitive)
+        # Match everything until the next player marker or end of string
+        green_match = re.search(
+            r'Green\s+Player:\s*(.+?)(?=Red\s+Player:|$)',
+            objectives_text,
+            re.DOTALL | re.IGNORECASE
+        )
+        red_match = re.search(
+            r'Red\s+Player:\s*(.+?)$',
+            objectives_text,
+            re.DOTALL | re.IGNORECASE
+        )
+
+        if green_match:
+            green_objectives = green_match.group(1).strip()
+        if red_match:
+            red_objectives = red_match.group(1).strip()
+
+        return {"green": green_objectives, "red": red_objectives}
+
     def _render_decoded_objectives(self, script: List[Tuple[int, int]], record: ScenarioRecord) -> None:
         """Render decoded objectives with color-coded backgrounds for each player."""
         text_widget = self.decoded_objectives_text
@@ -2023,15 +2057,64 @@ class ScenarioEditorApp:
             text_widget.config(state=tk.DISABLED)
             return
 
-        # Add descriptive objectives text from SCENARIO.DAT first
-        if record.objectives and record.objectives.strip():
-            text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n")
-            text_widget.insert(tk.END, "SCENARIO OBJECTIVES (Descriptive Text)\n")
-            text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n\n")
-            text_widget.insert(tk.END, record.objectives.strip() + "\n\n")
-            text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n")
-            text_widget.insert(tk.END, "BINARY OPCODE IMPLEMENTATION\n")
-            text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n\n")
+        # Check if this scenario has explicit player section markers
+        has_explicit_red_marker = any(op == 0x01 and oper == 0x00 for op, oper in script)
+        has_explicit_green_marker = any(op == 0x01 and oper == 0x0d for op, oper in script)
+        has_campaign_marker = any(op == 0x01 and oper == 0xc0 for op, oper in script)
+
+        # For scenarios 5-23 (no player markers), parse and display player objectives from text
+        if not (has_explicit_green_marker or has_explicit_red_marker or has_campaign_marker):
+            if record.objectives and record.objectives.strip():
+                player_objs = self._parse_player_objectives(record.objectives)
+
+                text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n")
+                text_widget.insert(tk.END, "PLAYER OBJECTIVES (From Narrative Text)\n")
+                text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n\n")
+
+                # Display Green player objectives with color coding
+                if player_objs["green"]:
+                    start_pos = text_widget.index(tk.INSERT)
+                    text_widget.insert(tk.END, "╔═══ GREEN PLAYER OBJECTIVES ═══╗\n")
+                    end_pos = text_widget.index(tk.INSERT)
+                    text_widget.tag_add("green_header", start_pos, end_pos)
+
+                    start_pos = text_widget.index(tk.INSERT)
+                    text_widget.insert(tk.END, player_objs["green"] + "\n\n")
+                    text_widget.tag_add("green_bg", start_pos, text_widget.index(tk.INSERT))
+
+                # Display Red player objectives with color coding
+                if player_objs["red"]:
+                    start_pos = text_widget.index(tk.INSERT)
+                    text_widget.insert(tk.END, "╔═══ RED PLAYER OBJECTIVES ═══╗\n")
+                    end_pos = text_widget.index(tk.INSERT)
+                    text_widget.tag_add("red_header", start_pos, end_pos)
+
+                    start_pos = text_widget.index(tk.INSERT)
+                    text_widget.insert(tk.END, player_objs["red"] + "\n\n")
+                    text_widget.tag_add("red_bg", start_pos, text_widget.index(tk.INSERT))
+
+                # Add explanatory note
+                text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n")
+                text_widget.insert(tk.END, "BINARY OPCODE IMPLEMENTATION\n")
+                text_widget.insert(tk.END, "(Game Rules - Not Player-Specific)\n")
+                text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n\n")
+
+                start_pos = text_widget.index(tk.INSERT)
+                text_widget.insert(tk.END, "ℹ️ NOTE: For scenarios 5-23, opcodes encode game rules and victory\n")
+                text_widget.insert(tk.END, "conditions. Player-specific objectives are determined at runtime\n")
+                text_widget.insert(tk.END, "based on unit ownership. See narrative text above for player details.\n\n")
+                text_widget.tag_add("neutral_bg", start_pos, text_widget.index(tk.INSERT))
+
+        else:
+            # For scenarios 0-4 with explicit player markers, show traditional display
+            if record.objectives and record.objectives.strip():
+                text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n")
+                text_widget.insert(tk.END, "SCENARIO OBJECTIVES (Descriptive Text)\n")
+                text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n\n")
+                text_widget.insert(tk.END, record.objectives.strip() + "\n\n")
+                text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n")
+                text_widget.insert(tk.END, "BINARY OPCODE IMPLEMENTATION\n")
+                text_widget.insert(tk.END, "═══════════════════════════════════════════════════\n\n")
 
         # Extract turn count from byte offset 45 in trailing bytes
         turn_count_from_byte45 = None
