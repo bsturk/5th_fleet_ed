@@ -1214,8 +1214,10 @@ class ScenarioEditorApp:
             if template_records and 0 <= unit.template_id < len(template_records):
                 template = template_records[unit.template_id]
                 name_display = template.name
-                if template.icon_index is not None:
-                    name_display = f"{template.name} (#{template.icon_index})"
+                # Get the effective icon index (including default for submarines)
+                effective_icon = self._template_icon_index(unit_table.kind, unit.template_id)
+                if effective_icon is not None:
+                    name_display = f"{template.name} (#{effective_icon})"
             else:
                 template = None
                 max_id = len(template_records) - 1 if template_records else 0
@@ -2740,8 +2742,14 @@ class ScenarioEditorApp:
             # Try to find which templates use this icon
             using_templates = []
             for kind in ["air", "surface", "sub"]:
-                for template in self._template_records(kind):
-                    if template.icon_index == icon.index:
+                for idx, template in enumerate(self._template_records(kind)):
+                    # Check if template uses this icon
+                    uses_icon = template.icon_index == icon.index
+                    # Submarines use sequential icons: icon = 41 + template_id
+                    if not uses_icon and kind == "sub" and template.icon_index is None and icon.index == 41 + idx:
+                        uses_icon = True
+
+                    if uses_icon:
                         using_templates.append(f"{template.name[:8]}")
                         if len(using_templates) >= 2:  # Limit display
                             break
@@ -2800,7 +2808,12 @@ class ScenarioEditorApp:
     def _template_icon_index(self, kind: str, template_id: int) -> Optional[int]:
         records = self._template_records(kind)
         if 0 <= template_id < len(records):
-            return records[template_id].icon_index
+            icon_index = records[template_id].icon_index
+            # Submarines don't have icon index stored in template file
+            # They use sequential icons starting at 41: icon = 41 + template_id
+            if icon_index is None and kind == "sub":
+                return 41 + template_id
+            return icon_index
         return None
 
     def _update_unit_icon_preview(self, kind: str, unit: UnitRecord) -> None:

@@ -16,7 +16,7 @@ UNIT_FRAME_SIZE = UNIT_FRAME_WORDS * 2
 TEMPLATE_ICON_OFFSETS = {
     "TRMAIR.DAT": (33, 1),
     "TRMSRF.DAT": (114, 2),
-    "TRMSUB.DAT": (26, 1),
+    "TRMSUB.DAT": (None, 1),  # Icon offset unknown - byte 26 was reading text data
 }
 
 
