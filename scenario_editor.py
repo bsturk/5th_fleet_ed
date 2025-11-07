@@ -496,7 +496,7 @@ class ScenarioEditorApp:
         self.notebook.add(frame, text="Objectives")
 
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(2, weight=1)
+        frame.rowconfigure(1, weight=1)
 
         # Scenario selector
         scenario_selector = ttk.Frame(frame)
@@ -510,15 +510,19 @@ class ScenarioEditorApp:
         )
         self.objectives_scenario_combo.pack(side=tk.LEFT, padx=4)
 
+        # Container lets the decoded text area and opcode table share space via a resizable sash
+        paned = ttk.PanedWindow(frame, orient=tk.VERTICAL)
+        paned.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 4))
+
         # Decoded objectives display
-        decoded_frame = ttk.LabelFrame(frame, text="Decoded Objectives")
-        decoded_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 4))
+        decoded_frame = ttk.LabelFrame(paned, text="Decoded Objectives")
         decoded_frame.columnconfigure(0, weight=1)
+        decoded_frame.rowconfigure(0, weight=1)
 
         self.decoded_objectives_text = tk.Text(decoded_frame, height=6, width=80, wrap=tk.WORD)
         decoded_scroll = ttk.Scrollbar(decoded_frame, orient=tk.VERTICAL, command=self.decoded_objectives_text.yview)
         self.decoded_objectives_text.config(yscrollcommand=decoded_scroll.set)
-        self.decoded_objectives_text.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
+        self.decoded_objectives_text.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
         decoded_scroll.grid(row=0, column=1, sticky="ns")
 
         # Configure tags for player-specific objective coloring
@@ -534,7 +538,11 @@ class ScenarioEditorApp:
         self.decoded_objectives_text.config(state=tk.DISABLED)
 
         columns = ("index", "opcode", "operand", "mnemonic", "description")
-        tree = ttk.Treeview(frame, columns=columns, show="headings", height=10)
+        tree_frame = ttk.Frame(paned)
+        tree_frame.columnconfigure(0, weight=1)
+        tree_frame.rowconfigure(0, weight=1)
+
+        tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=10)
         tree.heading("index", text="#")
         tree.heading("opcode", text="Opcode")
         tree.heading("operand", text="Operand")
@@ -556,12 +564,14 @@ class ScenarioEditorApp:
         tree.tag_configure("campaign_header_row", background="#ffd700", font=("TkDefaultFont", 9, "bold"))  # Gold
         tree.tag_configure("neutral_row", background="#f0f0f0")  # Light gray for single-player
 
-        tree.grid(row=2, column=0, sticky="nsew", padx=6, pady=4)
+        tree.grid(row=0, column=0, sticky="nsew", padx=6, pady=4)
+        paned.add(decoded_frame, weight=1)
+        paned.add(tree_frame, weight=3)
         tree.bind("<<TreeviewSelect>>", self._on_select_win_word)
         self.win_tree = tree
 
         editor = ttk.Frame(frame)
-        editor.grid(row=3, column=0, sticky="ew", padx=6, pady=4)
+        editor.grid(row=2, column=0, sticky="ew", padx=6, pady=4)
         editor.columnconfigure(3, weight=1)
         ttk.Label(editor, text="Selected #").grid(row=0, column=0, sticky="w")
         self.win_index_var = tk.StringVar(value="-")
