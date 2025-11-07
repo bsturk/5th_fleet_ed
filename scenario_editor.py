@@ -139,7 +139,14 @@ class ScenarioEditorApp:
         self.unit_icon_photo: Optional[ImageTk.PhotoImage] = None
         self.unit_icon_info_var = tk.StringVar(value="Icon: n/a")
 
+        # Map region graphics
+        self.stratmap_image = None  # PIL Image for STRATMAP.PCX
+        self.tactical_image = None  # PIL Image for TACTICAL.PCX
+        self.region_map_photo: Optional[ImageTk.PhotoImage] = None
+        self.region_map_canvas: Optional[tk.Canvas] = None
+
         self._load_micon_library()
+        self._load_map_images()
         try:
             self.template_library = load_template_library(self.game_dir)
         except Exception:  # pragma: no cover - defensive
@@ -213,6 +220,28 @@ class ScenarioEditorApp:
             self.icon_load_error = None
         self._update_icon_status()
         self._populate_icon_list()
+
+    def _load_map_images(self) -> None:
+        """Load strategic and tactical maps for region graphics display.
+
+        STRATMAP.PCX contains the in-game UI with map panels.
+        The region coordinates are documented to map directly to these panels.
+        """
+        from PIL import Image
+        import io
+
+        # Load STRATMAP.PCX and TACTICAL.PCX from MAINLIB.GXL
+        mainlib_path = self.game_dir / "MAINLIB.GXL"
+        if mainlib_path.exists():
+            try:
+                entries = load_gxl_archive(mainlib_path)
+                for entry in entries:
+                    if "STRATMAP" in entry.name.upper():
+                        self.stratmap_image = Image.open(io.BytesIO(entry.data))
+                    elif "TACTICAL" in entry.name.upper():
+                        self.tactical_image = Image.open(io.BytesIO(entry.data))
+            except Exception:  # pragma: no cover - defensive
+                pass
 
     def _update_icon_status(self) -> None:
         if hasattr(self, "icon_status_var"):
@@ -383,6 +412,32 @@ class ScenarioEditorApp:
         ttk.Button(editor, text="Apply Region Changes", command=self.apply_region_changes).grid(
             row=4, column=1, sticky="e", pady=4
         )
+
+        # Region map preview
+        map_frame = ttk.LabelFrame(editor, text="Region Map Preview")
+        map_frame.grid(row=5, column=0, columnspan=2, sticky="nsew", pady=6)
+        editor.rowconfigure(5, weight=1)
+
+        # Canvas for displaying region graphics
+        canvas_container = ttk.Frame(map_frame)
+        canvas_container.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+
+        h_scroll = ttk.Scrollbar(canvas_container, orient=tk.HORIZONTAL)
+        h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+
+        v_scroll = ttk.Scrollbar(canvas_container, orient=tk.VERTICAL)
+        v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.region_map_canvas = tk.Canvas(
+            canvas_container,
+            bg="gray20",
+            xscrollcommand=h_scroll.set,
+            yscrollcommand=v_scroll.set
+        )
+        self.region_map_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        h_scroll.config(command=self.region_map_canvas.xview)
+        v_scroll.config(command=self.region_map_canvas.yview)
 
     def _build_oob_tab(self) -> None:
         frame = ttk.Frame(self.notebook)
@@ -934,6 +989,129 @@ class ScenarioEditorApp:
         self.region_x_var.set(position["x_raw"])
         self.region_y_var.set(position["y_raw"])
         self.region_width_var.set(position["width_raw"])
+
+        # Display region graphics
+        self._display_region_graphics(position)
+
+    def _display_region_graphics(self, position: Dict) -> None:
+        """Display the region from STRATMAP panels.
+
+        The coordinates map directly to panels in STRATMAP.PCX as documented.
+        Panel 0 is at offset (184, 0), Panel 1 at (48, 8).
+        """
+        from PIL import Image, ImageDraw
+
+        if not self.region_map_canvas:
+            return
+
+        # Clear previous image
+        self.region_map_canvas.delete("all")
+        self.region_map_photo = None
+
+        panel = position["panel"]
+        x_raw = position["x_raw"]
+        y_raw = position["y_raw"]
+        width_raw = position["width_raw"]
+
+        # Select the appropriate map
+        if panel <= 1:
+            map_image = self.stratmap_image  # STRATMAP.PCX (640×480)
+            is_strategic = True
+        else:
+            map_image = self.tactical_image  # TACTICAL.PCX (640×480)
+            is_strategic = False
+
+        if not map_image:
+            self.region_map_canvas.create_text(
+                10, 10,
+                text="Map image not available",
+                fill="white",
+                anchor=tk.NW
+            )
+            return
+
+        if is_strategic:
+            # The coordinates appear to be viewport coordinates (0-255 range) that map
+            # to a 256-pixel-wide scrollable view of MAPVER20.PCX
+            # Panel 0 = left half, Panel 1 = right half
+
+            # Load the actual strategic map
+            mapver_path = Path(self.game_dir) / "MAPVER20.PCX"
+            if mapver_path.exists():
+                from PIL import Image as PILImage
+                mapver20 = PILImage.open(mapver_path)
+
+                # Scale viewport coordinates to full map
+                # Each panel shows half the map width scaled to 256 pixels
+                scale_x = (mapver20.width / 2) / 256
+                scale_y = mapver20.height / 256
+
+                if panel == 0:
+                    # Left half
+                    full_x = int(x_raw * scale_x)
+                else:
+                    # Right half
+                    full_x = int((mapver20.width / 2) + (x_raw * scale_x))
+
+                full_y = int(y_raw * scale_y)
+
+                # Show a 600x600 area
+                view_size = 600
+                crop_x1 = max(0, full_x - view_size // 2)
+                crop_y1 = max(0, full_y - view_size // 2)
+                crop_x2 = min(mapver20.width, crop_x1 + view_size)
+                crop_y2 = min(mapver20.height, crop_y1 + view_size)
+
+                # Use MAPVER20 instead
+                map_image = mapver20
+            else:
+                # Fallback: use whatever we loaded
+                full_x = x_raw
+                full_y = y_raw
+                crop_x1, crop_y1 = 0, 0
+                crop_x2, crop_y2 = map_image.width, map_image.height
+
+        else:
+            # Tactical map coordinates
+            full_x = x_raw
+            full_y = y_raw
+
+            # Show area around coordinates
+            padding = 100
+            crop_x1 = max(0, full_x - padding)
+            crop_y1 = max(0, full_y - padding)
+            crop_x2 = min(map_image.width, full_x + padding)
+            crop_y2 = min(map_image.height, full_y + padding)
+
+        # Crop the panel region
+        region_img = map_image.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+
+        # Draw a crosshair at the label position
+        draw = ImageDraw.Draw(region_img)
+        marker_x = full_x - crop_x1
+        marker_y = full_y - crop_y1
+
+        # Crosshair marker
+        cross_size = 15
+        draw.line([marker_x - cross_size, marker_y, marker_x + cross_size, marker_y],
+                 fill="red", width=2)
+        draw.line([marker_x, marker_y - cross_size, marker_x, marker_y + cross_size],
+                 fill="red", width=2)
+        draw.ellipse([marker_x-3, marker_y-3, marker_x+3, marker_y+3],
+                    fill="yellow", outline="red", width=1)
+
+        # Scale up for better visibility (panels are only 256 pixels wide)
+        scale_factor = 2.0
+        new_size = (int(region_img.width * scale_factor), int(region_img.height * scale_factor))
+        region_img = region_img.resize(new_size, Image.NEAREST)  # NEAREST for pixel-perfect scaling
+
+        # Convert to PhotoImage and display
+        self.region_map_photo = ImageTk.PhotoImage(region_img)
+        self.region_map_canvas.create_image(0, 0, anchor=tk.NW, image=self.region_map_photo)
+        self.region_map_canvas.configure(scrollregion=self.region_map_canvas.bbox("all"))
+
+        # Keep reference to prevent garbage collection
+        self.region_map_canvas.image = self.region_map_photo  # type: ignore
 
     def apply_region_changes(self) -> None:
         if self.map_file is None or self.selected_region_index is None:

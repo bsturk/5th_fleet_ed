@@ -834,9 +834,66 @@ Scenarios with shorter trailing_bytes (or those using the campaign system) store
 
 ### Data File: Order of Battle (OOB)
 
-- Pointer entries 5, 8, and 11 hold the air, surface, and submarine OOB respectively. Each block is a sequence of 32-byte frames (16 little-endian words).
-- The low byte of word 0 is the template index into `TRMAIR.DAT`, `TRMSRF.DAT`, or `TRMSUB.DAT`. The remaining bits encode ownership/flags (`side = owner_raw & 0x03` is surfaced by the parser). Subsequent words carry deployment metadata (region hints—when the value is < number of regions we map it to the region name—plus tile coordinates/other flags).
-- The script aggregates these frames to report total units per category, the most common templates, side distribution, and a few sample deployments. Raw word data is preserved in JSON for deeper reverse-engineering.
+Pointer entries 5, 8, and 11 hold the air, surface, and submarine OOB respectively. Each block is a sequence of **32-byte frames (16 little-endian words)** defining unit placements.
+
+#### Unit Record Structure (32 bytes = 16 words):
+
+| Offset | Word | Content | Description |
+|--------|------|---------|-------------|
+| 0-1 | 0 | `(owner_raw << 8) \| template_id` | **Word 0**: Low byte = template index into TRMAIR/TRMSRF/TRMSUB.DAT, High byte = owner flags (bits 0-1 = side: 0=Green, 1=Red, 2=Blue, 3=Yellow) |
+| 2-3 | 1 | `region_index` | **Word 1**: Region index (0-21 for valid placements). Values >= 22 indicate special markers, reinforcements, or invalid slots |
+| 4-5 | 2 | `tile_x` | **Word 2**: Tile X coordinate (encoding varies - see below) |
+| 6-7 | 3 | `tile_y` | **Word 3**: Tile Y coordinate (encoding varies - see below) |
+| 8-31 | 4-15 | Additional data | **Words 4-15**: Unit status, strength, mission flags, and other metadata |
+
+#### Tile Coordinate Encoding:
+
+The tile coordinates use a **variable encoding scheme** that differs between scenarios and unit types:
+
+**Pattern 1: High-byte-only encoding** (observed in Maldives scenario):
+- When low byte of both word 2 and word 3 = 0x00
+- Actual coordinate = high byte value
+- Example: `0x0800, 0x2000` → hex position (8, 32)
+- Common in scenarios where units are pre-positioned on a coarse hex grid
+
+**Pattern 2: Full-word encoding** (observed in Raiders scenario):
+- Full 16-bit word values used as coordinates
+- Example: `0x0035, 0x003b` → position (53, 59)
+- Values range from small (0-100) to large (>10000)
+- Large values may indicate:
+  - Pixel coordinates on tactical map
+  - Packed data (hex coordinate + facing/altitude in unused bits)
+  - Off-map reinforcement timing/location codes
+
+**Pattern 3: Invalid/Special markers**:
+- Values like `0x050c, 0xff00` (1292, 65280) with 0xFF high byte
+- Likely indicate undeployed units, reinforcement pools, or data errors
+- Should be filtered when visualizing unit placements
+
+#### Unit Placement by Region:
+
+Units with `region_index < 22` are deployed within that specific region. The tile coordinates position them on the tactical hex map for that region. Each region represents a geographic area (e.g., "Gulf of Aden", "Maldives") where tactical combat occurs.
+
+**Example placements (Maldives scenario)**:
+```
+Africa (Region 0):
+  - Air unit (Red): hex (8, 32)
+  - Air unit (Blue): tile (12, 42)
+  - Surface unit (Blue): hex (20, 28)
+
+North Arabian Sea (Region 11):
+  - Air unit (Blue): tile (53, 59)
+```
+
+#### Visualization:
+
+A visualization tool (`visualize_units.py`) can plot unit placements on MAPVER20.PCX by:
+1. Filtering units with valid region indices (< 22)
+2. Decoding tile coordinates based on pattern detection
+3. Mapping hex/tile coordinates to pixel positions
+4. Color-coding by side (Green/Red/Blue/Yellow)
+
+The coordinate system varies by scenario and may use different scales or encodings. Further disassembly analysis is needed to fully decode all coordinate patterns.
 
 ### Data Table: Global Tables
 
