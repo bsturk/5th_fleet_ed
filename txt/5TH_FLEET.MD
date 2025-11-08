@@ -895,6 +895,43 @@ A visualization tool (`visualize_units.py`) can plot unit placements on MAPVER20
 
 The coordinate system varies by scenario and may use different scales or encodings. Further disassembly analysis is needed to fully decode all coordinate patterns.
 
+#### Scenario Editor OOB Filtering:
+
+The scenario editor must filter units when displaying the OOB table to show only **starting units** in the scenario. Map files (e.g., `MALDIVE.DAT`) contain all units including reinforcements and off-map units, which should not appear in the editor's unit list.
+
+**Filtering Rule (from disassembly analysis):**
+
+Starting units are identified by a single criterion:
+- **`region_index == 0`** - Unit must be in region 0 EXACTLY (not any valid region < 22, but specifically region 0)
+
+This was discovered through analysis of disasm.txt at lines 43479-43496 and 45206-45246, where the game engine's unit loading code explicitly checks `cmp byte ptr es:[bx+22h], 0` and skips units where region != 0.
+
+**Example (Maldives scenario):**
+- Total units in MALDIVE.DAT: 84 units (31 air + 31 surface + 22 submarine)
+- Starting units (region == 0): 9 units (4 air + 2 surface + 3 submarine)
+- Units in other regions (1-21): Deployed during scenario but not at start
+- Off-map/reserve pool (region_index >= 22): Reinforcements
+
+**Implementation:**
+In `scenario_editor.py`, the `refresh_unit_table()` method (line 1213) implements this filter:
+```python
+for unit in unit_table.units:
+    # Starting units filter (from disassembly analysis):
+    # Only show units with region_index == 0 (exactly zero, not < 22)
+    # The game engine uses this exact match to select starting units
+    if unit.region_index != 0:
+        continue
+    # ... display unit in table ...
+```
+
+This ensures the editor displays only the units that are actually available at scenario start, matching the game's exact behavior.
+
+**Note on owner_raw Encoding:**
+The `owner_raw` byte structure requires further investigation. Current documentation suggests bits 0-1 encode side (0=Green, 1=Red, 2=Blue, 3=Yellow), but the actual encoding may be more complex. For Maldives submarines:
+- 1 unit with owner_raw=0x00
+- 2 units with owner_raw=0x04
+This matches the expected count of 3 starting submarines (1 Green + 2 Red per scenarios.md), suggesting bit 2 (0x04) may distinguish between opposing sides.
+
 ### Data Table: Global Tables
 
 - `TRMAIR.DAT`, `TRMSRF.DAT`, `TRMSUB.DAT`: Unit templates (counts followed by fixed-size records containing name, nationality code, stats, and weapon references). Needed to interpret per-scenario unit placements. Each record also carries the tactical chit index used in `MICONRES.RES`:

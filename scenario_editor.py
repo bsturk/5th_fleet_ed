@@ -1211,6 +1211,11 @@ class ScenarioEditorApp:
         self.oob_status_var.set("")
         template_records = self._template_records(unit_table.kind)
         for unit in unit_table.units:
+            # Starting units filter (from disassembly analysis):
+            # Only show units with region_index == 0 (exactly zero, not < 22)
+            # The game engine uses this exact match to select starting units
+            if unit.region_index != 0:
+                continue
             if template_records and 0 <= unit.template_id < len(template_records):
                 template = template_records[unit.template_id]
                 name_display = template.name
