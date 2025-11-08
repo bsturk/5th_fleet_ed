@@ -1191,7 +1191,9 @@ class ScenarioEditorApp:
     # ------------------------------------------------------------------#
     # Order of battle handling
     # ------------------------------------------------------------------#
+
     def refresh_unit_table(self) -> None:
+
         self.unit_tree.delete(*self.unit_tree.get_children())
         self._populate_region_names_for_units()
         unit_table = self._current_unit_table()
@@ -1210,12 +1212,17 @@ class ScenarioEditorApp:
 
         self.oob_status_var.set("")
         template_records = self._template_records(unit_table.kind)
+        added_units = []  # Track which units were actually added to the tree
+        
         for unit in unit_table.units:
             # Starting units filter (from disassembly analysis):
             # Only show units with region_index == 0 (exactly zero, not < 22)
             # The game engine uses this exact match to select starting units
             if unit.region_index != 0:
                 continue
+                
+            added_units.append(unit)  # Track this unit was added
+            
             if template_records and 0 <= unit.template_id < len(template_records):
                 template = template_records[unit.template_id]
                 name_display = template.name
@@ -1248,20 +1255,9 @@ class ScenarioEditorApp:
         current_selection = self.unit_tree.selection()
         if current_selection:
             self._on_select_unit()
-        elif unit_table.units:
-            self.unit_tree.selection_set(str(unit_table.units[0].slot))
+        elif added_units:  # Changed: select first ADDED unit, not first unit in table
+            self.unit_tree.selection_set(str(added_units[0].slot))
             self._on_select_unit()
-
-    def _refresh_unit_template_combo(self) -> None:
-        kind = self.oob_kind_var.get()
-        names = self._template_names(kind)
-        if not names:
-            self.unit_template_combo["values"] = []
-            self.unit_template_combo.set("")
-        else:
-            self.unit_template_combo["values"] = names
-            if self.unit_template_var.get() not in names:
-                self.unit_template_combo.current(0)
 
     def _populate_region_names_for_units(self) -> None:
         if self.map_file is None:
@@ -1271,6 +1267,16 @@ class ScenarioEditorApp:
         self.unit_region_combo["values"] = names
         if names:
             self.unit_region_combo.current(0)
+
+    def _refresh_unit_template_combo(self) -> None:
+        unit_table = self._current_unit_table()
+        if unit_table is None:
+            self.unit_template_combo["values"] = []
+            return
+        template_names = self._template_names(unit_table.kind)
+        self.unit_template_combo["values"] = template_names
+        if template_names:
+            self.unit_template_combo.current(0)
 
     def _current_unit_table(self):
         if self.map_file is None:
