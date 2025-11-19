@@ -104,6 +104,14 @@ SPECIAL_OPERANDS = {
     0x00: "NONE/STANDARD",
 }
 
+# STRATMAP.PCX contains two map insets embedded inside the scenario UI.
+# Each inset renders the scrolling MAPVER20 board inside a 256px viewport,
+# but the actual artwork is vertically offset within the PCX.
+STRATMAP_PANEL_BOUNDS = {
+    0: {"origin": (184, 15), "width": 256, "height": 284, "label": "Strategic map — east inset"},
+    1: {"origin": (48, 55), "width": 256, "height": 244, "label": "Strategic map — west inset"},
+}
+
 
 @dataclass
 class PortRecord:
@@ -170,6 +178,9 @@ class ScenarioEditorApp:
         self.tactical_image = None  # PIL Image for TACTICAL.PCX
         self.region_map_photo: Optional[ImageTk.PhotoImage] = None
         self.region_map_canvas: Optional[tk.Canvas] = None
+        self.region_panel_info_var = tk.StringVar(
+            value="Panel coordinates reference the STRATMAP insets (0=east, 1=west)."
+        )
 
         self._load_micon_library()
         self._load_map_images()
@@ -430,6 +441,12 @@ class ScenarioEditorApp:
         ttk.Entry(pos_frame, width=8, textvariable=self.region_width_var).grid(
             row=1, column=3, padx=4, pady=2
         )
+        ttk.Label(
+            pos_frame,
+            textvariable=self.region_panel_info_var,
+            wraplength=320,
+            justify=tk.LEFT,
+        ).grid(row=2, column=0, columnspan=4, sticky="w", padx=4, pady=(0, 2))
 
         ttk.Button(editor, text="Apply Region Changes", command=self.apply_region_changes).grid(
             row=4, column=1, sticky="e", pady=4
@@ -1027,128 +1044,127 @@ class ScenarioEditorApp:
         self.region_x_var.set(position["x_raw"])
         self.region_y_var.set(position["y_raw"])
         self.region_width_var.set(position["width_raw"])
+        self._update_region_panel_summary(position)
 
         # Display region graphics
         self._display_region_graphics(position)
 
-    def _display_region_graphics(self, position: Dict) -> None:
-        """Display the region from STRATMAP panels.
+    def _update_region_panel_summary(self, position: Dict[str, int]) -> None:
+        panel = position.get("panel", 0)
+        x_raw = position.get("x_raw", 0)
+        y_raw = position.get("y_raw", 0)
+        width_raw = position.get("width_raw", 0)
+        panel_spec = STRATMAP_PANEL_BOUNDS.get(panel)
+        if panel_spec:
+            origin_x, origin_y = panel_spec["origin"]
+            width_scale = panel_spec["width"] / 256.0
+            height_scale = panel_spec["height"] / 256.0
+            pixel_x = origin_x + int(round(x_raw * width_scale))
+            pixel_y = origin_y + int(round(y_raw * height_scale))
+            width_px = int(round(max(1, width_raw) * width_scale))
+            description = f"Panel {panel}"
+            if panel_spec.get("label"):
+                description += f" ({panel_spec['label']})"
+            description += (
+                f": inset ({x_raw}, {y_raw}) px → STRATMAP ({pixel_x}, {pixel_y})"
+            )
+        else:
+            description = f"Panel {panel}: inset ({x_raw}, {y_raw}) px"
+        description += f", width {width_raw}px"
+        if panel_spec:
+            description += f" (screen {pixel_x}–{pixel_x + width_px})"
+        self.region_panel_info_var.set(description)
 
-        The coordinates map directly to panels in STRATMAP.PCX as documented.
-        Panel 0 is at offset (184, 0), Panel 1 at (48, 8).
-        """
+    def _display_region_graphics(self, position: Dict) -> None:
+        """Display the region using the same STRATMAP/TACTICAL inset data as the game."""
         from PIL import Image, ImageDraw
 
         if not self.region_map_canvas:
             return
 
-        # Clear previous image
         self.region_map_canvas.delete("all")
         self.region_map_photo = None
 
-        panel = position["panel"]
-        x_raw = position["x_raw"]
-        y_raw = position["y_raw"]
-        width_raw = position["width_raw"]
+        panel = position.get("panel", 0)
+        x_raw = position.get("x_raw", 0)
+        y_raw = position.get("y_raw", 0)
 
-        # Select the appropriate map
-        if panel <= 1:
-            map_image = self.stratmap_image  # STRATMAP.PCX (640×480)
-            is_strategic = True
+        region_img: Optional[Image.Image] = None
+        marker_x = 0
+        marker_y = 0
+
+        panel_spec = STRATMAP_PANEL_BOUNDS.get(panel)
+        if panel_spec and self.stratmap_image is not None:
+            origin_x, origin_y = panel_spec["origin"]
+            width_px = panel_spec["width"]
+            height_px = panel_spec["height"]
+            crop_x1 = origin_x
+            crop_y1 = origin_y
+            crop_x2 = min(self.stratmap_image.width, origin_x + width_px)
+            crop_y2 = min(self.stratmap_image.height, origin_y + height_px)
+            region_img = self.stratmap_image.crop((crop_x1, crop_y1, crop_x2, crop_y2)).convert("RGBA")
+            scale_x = width_px / 256.0
+            scale_y = height_px / 256.0
+            marker_x = max(0, min(region_img.width - 1, int(round(x_raw * scale_x))))
+            marker_y = max(0, min(region_img.height - 1, int(round(y_raw * scale_y))))
+            rect_width = max(2, int(round(max(1, width_raw) * scale_x)))
         else:
-            map_image = self.tactical_image  # TACTICAL.PCX (640×480)
-            is_strategic = False
-
-        if not map_image:
-            self.region_map_canvas.create_text(
-                10, 10,
-                text="Map image not available",
-                fill="white",
-                anchor=tk.NW
-            )
-            return
-
-        if is_strategic:
-            # The coordinates appear to be viewport coordinates (0-255 range) that map
-            # to a 256-pixel-wide scrollable view of MAPVER20.PCX
-            # Panel 0 = left half, Panel 1 = right half
-
-            # Load the actual strategic map
-            mapver_path = Path(self.game_dir) / "MAPVER20.PCX"
-            if mapver_path.exists():
-                from PIL import Image as PILImage
-                mapver20 = PILImage.open(mapver_path)
-
-                # Scale viewport coordinates to full map
-                # Each panel shows half the map width scaled to 256 pixels
-                scale_x = (mapver20.width / 2) / 256
-                scale_y = mapver20.height / 256
-
-                if panel == 0:
-                    # Left half
-                    full_x = int(x_raw * scale_x)
-                else:
-                    # Right half
-                    full_x = int((mapver20.width / 2) + (x_raw * scale_x))
-
-                full_y = int(y_raw * scale_y)
-
-                # Show a 600x600 area
-                view_size = 600
-                crop_x1 = max(0, full_x - view_size // 2)
-                crop_y1 = max(0, full_y - view_size // 2)
-                crop_x2 = min(mapver20.width, crop_x1 + view_size)
-                crop_y2 = min(mapver20.height, crop_y1 + view_size)
-
-                # Use MAPVER20 instead
-                map_image = mapver20
-            else:
-                # Fallback: use whatever we loaded
-                full_x = x_raw
-                full_y = y_raw
-                crop_x1, crop_y1 = 0, 0
-                crop_x2, crop_y2 = map_image.width, map_image.height
-
-        else:
-            # Tactical map coordinates
-            full_x = x_raw
-            full_y = y_raw
-
-            # Show area around coordinates
-            padding = 100
+            source_image = self.tactical_image or self.stratmap_image
+            if source_image is None:
+                self.region_map_canvas.create_text(
+                    10,
+                    10,
+                    text="Map image not available",
+                    fill="white",
+                    anchor=tk.NW,
+                )
+                return
+            full_x = max(0, min(source_image.width - 1, x_raw))
+            full_y = max(0, min(source_image.height - 1, y_raw))
+            padding = 120
             crop_x1 = max(0, full_x - padding)
             crop_y1 = max(0, full_y - padding)
-            crop_x2 = min(map_image.width, full_x + padding)
-            crop_y2 = min(map_image.height, full_y + padding)
+            crop_x2 = min(source_image.width, full_x + padding)
+            crop_y2 = min(source_image.height, full_y + padding)
+            region_img = source_image.crop((crop_x1, crop_y1, crop_x2, crop_y2)).convert("RGBA")
+            marker_x = full_x - crop_x1
+            marker_y = full_y - crop_y1
+            rect_width = max(2, int(max(1, width_raw)))
 
-        # Crop the panel region
-        region_img = map_image.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+        draw = ImageDraw.Draw(region_img, "RGBA")
+        highlight_height = max(6, min(32, rect_width // 8 or 8))
+        rect_left = max(0, min(region_img.width - 1, marker_x))
+        rect_top = max(0, min(region_img.height - 1, marker_y))
+        rect_right = min(region_img.width, rect_left + rect_width)
+        rect_bottom = min(region_img.height, rect_top + highlight_height)
+        draw.rectangle(
+            [(rect_left, rect_top), (rect_right, rect_bottom)],
+            outline=(255, 0, 0, 255),
+            fill=(255, 255, 0, 80),
+            width=2,
+        )
+        center_x = (rect_left + rect_right) // 2
+        center_y = (rect_top + rect_bottom) // 2
+        cross_size = 10
+        draw.line(
+            [center_x - cross_size, center_y, center_x + cross_size, center_y],
+            fill="red",
+            width=2,
+        )
+        draw.line(
+            [center_x, center_y - cross_size, center_x, center_y + cross_size],
+            fill="red",
+            width=2,
+        )
 
-        # Draw a crosshair at the label position
-        draw = ImageDraw.Draw(region_img)
-        marker_x = full_x - crop_x1
-        marker_y = full_y - crop_y1
-
-        # Crosshair marker
-        cross_size = 15
-        draw.line([marker_x - cross_size, marker_y, marker_x + cross_size, marker_y],
-                 fill="red", width=2)
-        draw.line([marker_x, marker_y - cross_size, marker_x, marker_y + cross_size],
-                 fill="red", width=2)
-        draw.ellipse([marker_x-3, marker_y-3, marker_x+3, marker_y+3],
-                    fill="yellow", outline="red", width=1)
-
-        # Scale up for better visibility (panels are only 256 pixels wide)
         scale_factor = 2.0
         new_size = (int(region_img.width * scale_factor), int(region_img.height * scale_factor))
-        region_img = region_img.resize(new_size, Image.NEAREST)  # NEAREST for pixel-perfect scaling
+        region_img = region_img.resize(new_size, Image.NEAREST)
 
-        # Convert to PhotoImage and display
-        self.region_map_photo = ImageTk.PhotoImage(region_img)
+        display_img = region_img.convert("RGB")
+        self.region_map_photo = ImageTk.PhotoImage(display_img)
         self.region_map_canvas.create_image(0, 0, anchor=tk.NW, image=self.region_map_photo)
         self.region_map_canvas.configure(scrollregion=self.region_map_canvas.bbox("all"))
-
-        # Keep reference to prevent garbage collection
         self.region_map_canvas.image = self.region_map_photo  # type: ignore
 
     def apply_region_changes(self) -> None:
@@ -1180,11 +1196,19 @@ class ScenarioEditorApp:
         ]
         region.set_adjacent_codes(adjacency_tokens)
 
-        panel = self.region_panel_var.get()
-        x_raw = self.region_x_var.get()
-        y_raw = self.region_y_var.get()
-        width_raw = self.region_width_var.get()
+        clamp = lambda value: max(0, min(255, value))
+        panel = clamp(self.region_panel_var.get())
+        x_raw = clamp(self.region_x_var.get())
+        y_raw = clamp(self.region_y_var.get())
+        width_raw = clamp(self.region_width_var.get())
+        self.region_panel_var.set(panel)
+        self.region_x_var.set(x_raw)
+        self.region_y_var.set(y_raw)
+        self.region_width_var.set(width_raw)
         region.set_map_position(panel, x_raw, y_raw, width_raw)
+        new_position = region.map_position() or {"panel": panel, "x_raw": x_raw, "y_raw": y_raw, "width_raw": width_raw}
+        self._update_region_panel_summary(new_position)
+        self._display_region_graphics(new_position)
         self.refresh_region_list()
         messagebox.showinfo("Region Updated", "Region changes applied in memory.")
 
