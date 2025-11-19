@@ -18,6 +18,7 @@ import struct
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from PIL import ImageTk
@@ -104,6 +105,18 @@ SPECIAL_OPERANDS = {
 }
 
 
+@dataclass
+class PortRecord:
+    port_id: int
+    name: str
+    region_index: Optional[int]
+    x_raw: int
+    y_raw: int
+    is_objective: bool
+    offsets: List[int] = field(default_factory=list)
+    markers: List[int] = field(default_factory=list)
+
+
 def _default_game_dir() -> Path:
     candidate = Path("game")
     if candidate.exists():
@@ -130,6 +143,10 @@ class ScenarioEditorApp:
         }
 
         self.icon_library: List[MiconIcon] = []
+        self.port_records: List[PortRecord] = []
+        self._port_records_by_name: Dict[str, List[PortRecord]] = {}
+
+        self.icon_library: List[MiconIcon] = []
         self.icon_load_error: Optional[str] = None
         self.icon_photo_cache: Dict[Tuple[int, int], ImageTk.PhotoImage] = {}
         self.selected_icon_index: Optional[int] = None
@@ -138,6 +155,15 @@ class ScenarioEditorApp:
 
         self.unit_icon_photo: Optional[ImageTk.PhotoImage] = None
         self.unit_icon_info_var = tk.StringVar(value="Icon: n/a")
+
+        # Map region graphics
+        self.stratmap_image = None  # PIL Image for STRATMAP.PCX
+        self.port_name_var = tk.StringVar(value="Name: —")
+        self.port_region_var = tk.StringVar(value="Region: —")
+        self.port_coords_var = tk.StringVar(value="Map Coords: —")
+        self.port_objective_var = tk.StringVar(value="Objective Hex: —")
+        self.port_offsets_var = tk.StringVar(value="Offsets: —")
+        self.port_note_var = tk.StringVar(value="Select a port-related opcode to view details.")
 
         # Map region graphics
         self.stratmap_image = None  # PIL Image for STRATMAP.PCX
@@ -482,9 +508,10 @@ class ScenarioEditorApp:
         # Units table
         columns = ("slot", "template", "side", "region", "tile")
         tree = ttk.Treeview(frame, columns=columns, show="headings", height=12)
+        column_widths = {"template": 150, "region": 160, "tile": 130}
         for col, label in zip(columns, ("Slot", "Template", "Side", "Region", "Tile (x,y)")):
             tree.heading(col, text=label)
-            tree.column(col, width=110 if col == "template" else 80, anchor=tk.W)
+            tree.column(col, width=column_widths.get(col, 80), anchor=tk.W)
         tree.grid(row=3, column=0, sticky="nsew", padx=4, pady=4)
         tree.bind("<<TreeviewSelect>>", self._on_select_unit)
         self.unit_tree = tree
@@ -496,10 +523,17 @@ class ScenarioEditorApp:
 
         ttk.Label(editor, text="Template").grid(row=0, column=0, sticky="w", padx=2, pady=2)
         self.unit_template_var = tk.StringVar()
+        template_row = ttk.Frame(editor)
+        template_row.grid(row=0, column=1, columnspan=2, sticky="ew", padx=2, pady=2)
+        template_row.columnconfigure(0, weight=1)
         self.unit_template_combo = ttk.Combobox(
-            editor, textvariable=self.unit_template_var, state="readonly"
+            template_row, textvariable=self.unit_template_var, state="readonly"
         )
-        self.unit_template_combo.grid(row=0, column=1, sticky="ew", padx=2, pady=2)
+        self.unit_template_combo.grid(row=0, column=0, sticky="ew")
+        self.unit_vp_var = tk.StringVar(value="VP: n/a")
+        ttk.Label(template_row, textvariable=self.unit_vp_var).grid(
+            row=0, column=1, sticky="w", padx=(8, 0)
+        )
 
         ttk.Label(editor, text="Side (0-3)").grid(row=1, column=0, sticky="w", padx=2, pady=2)
         self.unit_side_var = tk.IntVar()
@@ -526,18 +560,23 @@ class ScenarioEditorApp:
             row=4, column=1, sticky="w", padx=2, pady=2
         )
 
-        ttk.Label(editor, textvariable=self.unit_icon_info_var).grid(
+        self.unit_position_info_var = tk.StringVar(value="Position: n/a")
+        ttk.Label(editor, textvariable=self.unit_position_info_var).grid(
             row=5, column=0, columnspan=2, sticky="w", padx=2, pady=(4, 2)
+        )
+
+        ttk.Label(editor, textvariable=self.unit_icon_info_var).grid(
+            row=6, column=0, columnspan=2, sticky="w", padx=2, pady=(4, 2)
         )
         # Frame to hold icon preview with fixed minimum size to prevent jumping
         icon_frame = ttk.Frame(editor, height=100)
-        icon_frame.grid(row=6, column=0, columnspan=2, pady=(0, 4))
+        icon_frame.grid(row=7, column=0, columnspan=2, pady=(0, 4))
         icon_frame.grid_propagate(False)  # Prevent frame from shrinking
         self.unit_icon_preview_label = ttk.Label(icon_frame)
         self.unit_icon_preview_label.pack(expand=True)
 
         button_row = ttk.Frame(editor)
-        button_row.grid(row=7, column=0, columnspan=2, sticky="e", pady=4)
+        button_row.grid(row=8, column=0, columnspan=2, sticky="e", pady=4)
         ttk.Button(button_row, text="Add Unit", command=self.add_unit).pack(side=tk.LEFT, padx=2)
         ttk.Button(button_row, text="Apply Unit", command=self.apply_unit).pack(
             side=tk.LEFT, padx=2
@@ -624,6 +663,19 @@ class ScenarioEditorApp:
         paned.add(tree_frame, weight=3)
         tree.bind("<<TreeviewSelect>>", self._on_select_win_word)
         self.win_tree = tree
+
+        tree_frame.rowconfigure(0, weight=1)
+        port_frame = ttk.LabelFrame(tree_frame, text="Port Details")
+        port_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(4, 0))
+        port_frame.columnconfigure(0, weight=1)
+        port_frame.columnconfigure(1, weight=1)
+        ttk.Label(port_frame, textvariable=self.port_name_var).grid(row=0, column=0, sticky="w")
+        ttk.Label(port_frame, textvariable=self.port_region_var).grid(row=0, column=1, sticky="w")
+        ttk.Label(port_frame, textvariable=self.port_coords_var).grid(row=1, column=0, sticky="w", pady=(0, 2))
+        ttk.Label(port_frame, textvariable=self.port_objective_var).grid(row=1, column=1, sticky="w", pady=(0, 2))
+        ttk.Label(port_frame, textvariable=self.port_offsets_var).grid(row=2, column=0, columnspan=2, sticky="w")
+        ttk.Label(port_frame, textvariable=self.port_note_var).grid(row=3, column=0, columnspan=2, sticky="w")
+        self._clear_port_details()
 
         editor = ttk.Frame(frame)
         editor.grid(row=2, column=0, sticky="ew", padx=6, pady=4)
@@ -962,6 +1014,8 @@ class ScenarioEditorApp:
         self.refresh_region_list()
         self.refresh_unit_table()
         self._populate_region_names_for_units()
+        self._parse_port_records_from_map()
+        self._clear_port_details("Select a port-related opcode to view details.")
 
     def refresh_region_list(self) -> None:
         self.region_listbox.delete(0, tk.END)
@@ -1213,15 +1267,9 @@ class ScenarioEditorApp:
         self.oob_status_var.set("")
         template_records = self._template_records(unit_table.kind)
         added_units = []  # Track which units were actually added to the tree
-        
+
         for unit in unit_table.units:
-            # Starting units filter (from disassembly analysis):
-            # Only show units with region_index == 0 (exactly zero, not < 22)
-            # The game engine uses this exact match to select starting units
-            if unit.region_index != 0:
-                continue
-                
-            added_units.append(unit)  # Track this unit was added
+            added_units.append(unit)
             
             if template_records and 0 <= unit.template_id < len(template_records):
                 template = template_records[unit.template_id]
@@ -1230,15 +1278,14 @@ class ScenarioEditorApp:
                 effective_icon = self._template_icon_index(unit_table.kind, unit.template_id)
                 if effective_icon is not None:
                     name_display = f"{template.name} (#{effective_icon})"
+                vp_value = template.victory_points if template.victory_points is not None else "n/a"
+                self.unit_vp_var.set(f"VP: {vp_value}")
             else:
                 template = None
                 max_id = len(template_records) - 1 if template_records else 0
                 name_display = f"Template {unit.template_id} (out of range 0-{max_id})"
-            region_name = (
-                self._region_name(unit.region_index)
-                if self.map_file
-                else f"{unit.region_index}"
-            )
+                self.unit_vp_var.set("VP: n/a")
+            position_summary = self._unit_position_summary(unit)
             self.unit_tree.insert(
                 "",
                 tk.END,
@@ -1247,8 +1294,8 @@ class ScenarioEditorApp:
                     unit.slot,
                     name_display,
                     unit.owner_raw & 0x03,
-                    region_name,
-                    f"{unit.tile_x}, {unit.tile_y}",
+                    position_summary["region"],
+                    position_summary["tile"],
                 ),
             )
         self._refresh_unit_template_combo()
@@ -1308,6 +1355,9 @@ class ScenarioEditorApp:
             self.unit_region_var.set(str(unit.region_index))
         self.unit_x_var.set(unit.tile_x)
         self.unit_y_var.set(unit.tile_y)
+        summary = self._unit_position_summary(unit)
+        note_text = summary["note"] if summary["note"] else "Position data unavailable"
+        self.unit_position_info_var.set(f"Position: {note_text}")
         self._update_unit_icon_preview(unit_table.kind, unit)
 
     def add_unit(self) -> None:
@@ -1377,6 +1427,45 @@ class ScenarioEditorApp:
         if 0 <= index < len(self.map_file.regions):
             return self.map_file.regions[index].name
         return ""
+
+    def _unit_position_summary(self, unit: UnitRecord) -> Dict[str, str]:
+        summary = {
+            "region": f"{unit.region_index}",
+            "tile": f"{unit.tile_x}, {unit.tile_y}",
+            "note": "No map loaded",
+        }
+        if not self.map_file:
+            return summary
+
+        direct_region = self._region_name(unit.region_index)
+        if direct_region:
+            summary["region"] = direct_region
+            summary["note"] = f"Direct region #{unit.region_index}"
+            return summary
+
+        resolved = self.map_file.resolve_position_slot(unit.region_index) if hasattr(self.map_file, "resolve_position_slot") else None
+        if resolved:
+            entry, entry_index = resolved
+            region_idx = entry.region_hint()
+            if region_idx is not None and 0 <= region_idx < len(self.map_file.regions):
+                region_label = self.map_file.regions[region_idx].name
+            elif region_idx is not None:
+                region_label = f"Special #{region_idx}"
+            else:
+                region_label = f"Slot 0x{unit.region_index:04x}"
+            tile_x = entry.hex_x()
+            tile_label = f"{tile_x}, {entry.tile_y_raw}*"
+            summary["region"] = region_label
+            summary["tile"] = tile_label
+            summary["note"] = (
+                f"Slot 0x{unit.region_index:04x} via entry {entry_index} "
+                f"(range 0x{entry.start:04x}-0x{entry.end:04x}, panel {entry.panel}, flags 0x{entry.flags:02x})"
+            )
+            return summary
+
+        summary["region"] = f"Slot 0x{unit.region_index:04x}"
+        summary["note"] = "No position mapping entry"
+        return summary
 
     def _decode_multizone_operand(self, opcode: int, operand: int) -> Optional[str]:
         """Decode out-of-range zone operands that encode multiple zones.
@@ -1538,59 +1627,165 @@ class ScenarioEditorApp:
         return None
 
     def _extract_objective_ports(self) -> List[str]:
-        """Extract objective port names from map file SHIP_DEST(251) markers.
+        """Return objective port names using parsed data when available.
 
-        Scans the raw map data for ports marked with 'fb 06' (SHIP_DEST(251)),
-        which indicates "objective hexes" as described in the game manual.
-
-        Returns list of objective port names (e.g., ["Aden", "Al Mukalla", "Ras Karma"]).
+        Falls back to a raw pattern search if necessary.
         """
+        if getattr(self, 'port_records', None):
+            return [record.name for record in self.port_records if record.is_objective]
+
         if self.map_file is None or self.map_file.path is None:
             return []
 
         try:
-            # Read raw map file data
             map_data = self.map_file.path.read_bytes()
-
-            # Search for 'fb 06' pattern (SHIP_DEST(251) marker)
-            objective_ports = []
+            objective_ports: List[str] = []
             pos = 0
             while True:
                 idx = map_data.find(b'\xfb\x06', pos)
                 if idx == -1:
                     break
-
-                # Port name should be 12-22 bytes after the marker
-                # Look for null-terminated string starting with capital letter
                 search_start = idx + 10
                 search_end = min(len(map_data), idx + 30)
                 segment = map_data[search_start:search_end]
-
-                # Find the port name
                 for i in range(len(segment)):
-                    if 65 <= segment[i] <= 90:  # Capital letter A-Z
-                        # Found potential start of port name
+                    if 65 <= segment[i] <= 90:
                         name_start = i
                         name_end = name_start
                         while name_end < len(segment) and segment[name_end] != 0:
                             name_end += 1
-
                         if name_end > name_start:
                             port_name = segment[name_start:name_end].decode('latin1', errors='replace')
-                            # Filter: must be 3+ chars, start with capital
                             if len(port_name) >= 3 and port_name[0].isupper():
-                                # Only add if not already in list
                                 if port_name not in objective_ports:
                                     objective_ports.append(port_name)
                                 break
-
                 pos = idx + 1
-
             return objective_ports
-
         except Exception:
-            # If anything goes wrong, return empty list
             return []
+
+    def _parse_port_records_from_map(self) -> None:
+        """Parse all port structures from the currently loaded map file."""
+        self.port_records = []
+        self._port_records_by_name = {}
+        if self.map_file_path is None:
+            return
+        try:
+            data = self.map_file_path.read_bytes()
+        except OSError:
+            return
+
+        prefix = b'\x00\x0f\x95M@\x0f\x95M'
+        entry_size = 0x46
+        combined: Dict[Tuple[str, int], PortRecord] = {}
+        pos = 0
+        region_count = len(self.map_file.regions) if self.map_file else 0
+        while True:
+            idx = data.find(prefix, pos)
+            if idx == -1 or idx + entry_size > len(data):
+                break
+            chunk = data[idx:idx + entry_size]
+            name_bytes = chunk[0x3A:].split(b'\x00', 1)[0]
+            name = name_bytes.decode('latin1', errors='replace').strip()
+            if len(name) < 3 or not name[0].isalpha():
+                pos = idx + entry_size
+                continue
+            x_raw = int.from_bytes(chunk[0x2A:0x2C], 'little')
+            y_raw = int.from_bytes(chunk[0x28:0x2A], 'little')
+            region_idx_raw = int.from_bytes(chunk[0x2C:0x2E], 'little')
+            marker = int.from_bytes(chunk[0x2E:0x30], 'little')
+            key = (name.lower(), region_idx_raw)
+            record = combined.get(key)
+            if record is None:
+                region_index = region_idx_raw if 0 <= region_idx_raw < region_count else None
+                record = PortRecord(
+                    port_id=0,
+                    name=name,
+                    region_index=region_index,
+                    x_raw=x_raw,
+                    y_raw=y_raw,
+                    is_objective=(marker == 0x06FB),
+                )
+                record.offsets.append(idx)
+                record.markers.append(marker)
+                combined[key] = record
+            else:
+                record.offsets.append(idx)
+                record.markers.append(marker)
+                if marker == 0x06FB:
+                    record.is_objective = True
+            pos = idx + entry_size
+
+        sorted_records = sorted(combined.values(), key=lambda rec: min(rec.offsets))
+        for port_id, record in enumerate(sorted_records, start=1):
+            record.port_id = port_id
+            self.port_records.append(record)
+            self._port_records_by_name.setdefault(record.name.lower(), []).append(record)
+
+    def _port_record_from_name(self, name: Optional[str]) -> Optional[PortRecord]:
+        if not name:
+            return None
+        records = self._port_records_by_name.get(name.lower())
+        if records:
+            return records[0]
+        return None
+
+    def _port_record_from_operand(self, operand: int) -> Optional[PortRecord]:
+        record = self._port_record_from_name(self._extract_port_name(operand))
+        if record:
+            return record
+        if not self.port_records:
+            return None
+        for offset in (0, -1, -2):
+            idx = operand + offset - 1
+            if 0 <= idx < len(self.port_records):
+                return self.port_records[idx]
+        return None
+
+    def _clear_port_details(self, note: str = "Select a port-related opcode to view details.") -> None:
+        self.port_name_var.set("Name: —")
+        self.port_region_var.set("Region: —")
+        self.port_coords_var.set("Map Coords: —")
+        self.port_objective_var.set("Objective Hex: —")
+        self.port_offsets_var.set("Offsets: —")
+        self.port_note_var.set(note)
+
+    def _show_port_details(self, record: PortRecord, note: Optional[str] = None) -> None:
+        self.port_name_var.set(f"Name: {record.name} (ID {record.port_id})")
+        if record.region_index is not None and self.map_file and 0 <= record.region_index < len(self.map_file.regions):
+            region_name = self.map_file.regions[record.region_index].name
+            region_text = f"{region_name} [#{record.region_index}]"
+        else:
+            display_idx = record.region_index if record.region_index is not None else 'n/a'
+            region_text = f"[#{display_idx}]"
+        self.port_region_var.set(f"Region: {region_text}")
+        self.port_coords_var.set(f"Map Coords (raw): x={record.x_raw} y={record.y_raw}")
+        self.port_objective_var.set("Objective Hex: Yes" if record.is_objective else "Objective Hex: No")
+        offsets_text = ", ".join(f"0x{offset:04x}" for offset in record.offsets)
+        markers_text = ", ".join(f"0x{marker:04x}" for marker in record.markers)
+        self.port_offsets_var.set(f"Offsets: {offsets_text} | Markers: {markers_text}")
+        self.port_note_var.set(note or "")
+
+    def _update_port_details(self, opcode: int, operand: int) -> None:
+        if not self.port_records:
+            self._clear_port_details("Load a map to view port details.")
+            return
+        if opcode in (0x06, 0x18):
+            record = self._port_record_from_operand(operand)
+            if record:
+                self._show_port_details(record)
+            else:
+                self._clear_port_details(f"No port data found for operand {operand}.")
+            return
+        if opcode == 0x04 or (opcode == 0x05 and operand == 0x06):
+            names = self._extract_objective_ports()
+            if names:
+                self._clear_port_details("Objective ports: " + ", ".join(names))
+            else:
+                self._clear_port_details("No objective ports flagged in this map.")
+            return
+        self._clear_port_details()
 
     def _extract_bases_from_narrative(self) -> List[str]:
         """Extract base/airfield names mentioned in narrative objectives text.
@@ -2646,6 +2841,7 @@ class ScenarioEditorApp:
         self.win_index_var.set(str(index))
         self.win_opcode_var.set(f"0x{opcode:02x}")
         self.win_operand_var.set(operand)
+        self._update_port_details(opcode, operand)
 
     def apply_win_word(self) -> None:
         record = self._current_record()

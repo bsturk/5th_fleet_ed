@@ -526,6 +526,28 @@ class UnitTable:
 
 
 @dataclass
+class PositionEntry:
+    start: int
+    end: int
+    tile_x_raw: int
+    tile_y_raw: int
+    panel: int
+    flags: int
+    region_code: int
+
+    def region_hint(self) -> Optional[int]:
+        value = self.region_code & 0xFF
+        return value if value != 0xFF else None
+
+    def hex_x(self) -> int:
+        if self.tile_x_raw == 0:
+            return 0
+        if self.tile_x_raw % 256 == 0:
+            return self.tile_x_raw // 256
+        return self.tile_x_raw
+
+
+@dataclass
 class MapFile:
     path: Optional[Path]
     regions: List[MapRegion]
@@ -533,6 +555,7 @@ class MapFile:
     unit_tables: Dict[str, UnitTable]
     pointer_blob: bytearray
     template_library: Dict[str, List[TemplateRecord]] = field(default_factory=dict)
+    position_entries: List["PositionEntry"] = field(default_factory=list)
 
     @property
     def region_count(self) -> int:
@@ -591,6 +614,29 @@ class MapFile:
             )
 
         unit_tables: Dict[str, UnitTable] = {}
+        position_entries: List[PositionEntry] = []
+        position_struct = struct.Struct("<HHHBBBH")
+        pointer_entry_14 = next((entry for entry in pointer_entries if entry.index == 14), None)
+        if pointer_entry_14 and len(pointer_entry_14.data) >= position_struct.size:
+            blob = pointer_entry_14.data
+            count = len(blob) // position_struct.size
+            for idx in range(count):
+                start, end, tile_x_raw, tile_y_raw, panel, flags, region_code = position_struct.unpack_from(
+                    blob, idx * position_struct.size
+                )
+                position_entries.append(
+                    PositionEntry(
+                        start=start,
+                        end=end,
+                        tile_x_raw=tile_x_raw,
+                        tile_y_raw=tile_y_raw,
+                        panel=panel,
+                        flags=flags,
+                        region_code=region_code,
+                    )
+                )
+            position_entries.sort(key=lambda record: record.start)
+
         for entry in pointer_entries:
             kind = UNIT_POINTER_MAP.get(entry.index)
             if not kind:
@@ -620,6 +666,7 @@ class MapFile:
             unit_tables=unit_tables,
             pointer_blob=pointer_blob,
             template_library=template_library,
+            position_entries=position_entries,
         )
 
     def save(self, path: Optional[Path] = None) -> None:
@@ -657,6 +704,21 @@ class MapFile:
             pointer_blob[start:end] = chunk
         buffer.extend(pointer_blob)
         target.write_bytes(bytes(buffer))
+
+    def resolve_position_slot(self, slot: int) -> Optional[Tuple[PositionEntry, int]]:
+        if not self.position_entries:
+            return None
+        left, right = 0, len(self.position_entries) - 1
+        while left <= right:
+            mid = (left + right) // 2
+            entry = self.position_entries[mid]
+            if slot < entry.start:
+                right = mid - 1
+            elif slot > entry.end:
+                left = mid + 1
+            else:
+                return entry, mid
+        return None
 
 
 def parse_region_block(block: bytes, index: int) -> MapRegion:
@@ -778,10 +840,11 @@ class TemplateRecord:
     name: str
     icon_index: Optional[int]
     raw: bytes
+    victory_points: Optional[int] = None
 
 
 def load_template_library(base_dir: Path) -> Dict[str, List[TemplateRecord]]:
-    def parse_file(filename: str, icon_offset: Optional[int], icon_bytes: int) -> List[TemplateRecord]:
+    def parse_file(filename: str, icon_offset: Optional[int], icon_bytes: int, kind: str) -> List[TemplateRecord]:
         source = base_dir / filename
         if not source.exists():
             return []
@@ -801,13 +864,28 @@ def load_template_library(base_dir: Path) -> Dict[str, List[TemplateRecord]]:
                     icon_index = record[icon_offset]
                 elif icon_bytes == 2 and icon_offset + 2 <= len(record):
                     icon_index = struct.unpack_from("<H", record, icon_offset)[0] & 0xFF
-            templates.append(TemplateRecord(name=name, icon_index=icon_index, raw=record))
+
+            victory_points: Optional[int] = None
+            if kind in {"surface", "sub"}:
+                vp_offset = 0x72
+                if vp_offset + 2 <= len(record):
+                    victory_points = struct.unpack_from("<H", record, vp_offset)[0]
+            elif kind == "air":
+                # Empirically, the last non-zero byte encodes the VP value.
+                for byte in reversed(record):
+                    if byte != 0:
+                        victory_points = byte
+                        break
+
+            templates.append(
+                TemplateRecord(name=name, icon_index=icon_index, raw=record, victory_points=victory_points)
+            )
         return templates
 
     library: Dict[str, List[TemplateRecord]] = {}
     for fname, (offset, size) in TEMPLATE_ICON_OFFSETS.items():
         kind = "air" if "AIR" in fname else "surface" if "SRF" in fname else "sub"
-        library[kind] = parse_file(fname, offset, size)
+        library[kind] = parse_file(fname, offset, size, kind)
     return library
 
 

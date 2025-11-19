@@ -841,96 +841,41 @@ Pointer entries 5, 8, and 11 hold the air, surface, and submarine OOB respective
 | Offset | Word | Content | Description |
 |--------|------|---------|-------------|
 | 0-1 | 0 | `(owner_raw << 8) \| template_id` | **Word 0**: Low byte = template index into TRMAIR/TRMSRF/TRMSUB.DAT, High byte = owner flags (bits 0-1 = side: 0=Green, 1=Red, 2=Blue, 3=Yellow) |
-| 2-3 | 1 | `region_index` | **Word 1**: Region index (0-21 for valid placements). Values >= 22 indicate special markers, reinforcements, or invalid slots |
+| 2-3 | 1 | `position_slot` | **Word 1**: When `< region_count`, it is the on-map region id. Otherwise it encodes a slot ID that must be resolved through pointer section 14 (see below). |
 | 4-5 | 2 | `tile_x` | **Word 2**: Tile X coordinate (encoding varies - see below) |
 | 6-7 | 3 | `tile_y` | **Word 3**: Tile Y coordinate (encoding varies - see below) |
 | 8-31 | 4-15 | Additional data | **Words 4-15**: Unit status, strength, mission flags, and other metadata |
 
-#### Tile Coordinate Encoding:
+#### Pointer Section 14: Unit Position Table
 
-The tile coordinates use a **variable encoding scheme** that differs between scenarios and unit types:
+Pointer entry **14** in every scenario `.DAT` file contains a packed table that maps the 16-bit `position_slot` values back to actual spawn data. Each record is **11 bytes** long:
 
-**Pattern 1: High-byte-only encoding** (observed in Maldives scenario):
-- When low byte of both word 2 and word 3 = 0x00
-- Actual coordinate = high byte value
-- Example: `0x0800, 0x2000` → hex position (8, 32)
-- Common in scenarios where units are pre-positioned on a coarse hex grid
+| Offset | Size | Meaning |
+|--------|------|---------|
+| 0x00 | `uint16` | `slot_start` — inclusive lower bound |
+| 0x02 | `uint16` | `slot_end` — inclusive upper bound |
+| 0x04 | `uint16` | `tile_x_raw` — usually multiples of 0x100 (divide by 256 for hex column) |
+| 0x06 | `uint8`  | `tile_y_raw` |
+| 0x07 | `uint8`  | `panel` (0/1 strategic panel, ≥2 tactical board) |
+| 0x08 | `uint8`  | `flags` (bitfield/signature used by the loader) |
+| 0x09 | `uint16` | `region_code` — low byte is the region id when `< 0x16`, otherwise a special off-map/staging code |
 
-**Pattern 2: Full-word encoding** (observed in Raiders scenario):
-- Full 16-bit word values used as coordinates
-- Example: `0x0035, 0x003b` → position (53, 59)
-- Values range from small (0-100) to large (>10000)
-- Large values may indicate:
-  - Pixel coordinates on tactical map
-  - Packed data (hex coordinate + facing/altitude in unused bits)
-  - Off-map reinforcement timing/location codes
+During loading the game performs a binary search across this table (`sub_50465` → `sub_A6088`) comparing the unit’s `position_slot` against `slot_start/slot_end`. Once a record is found, the panel/flag/tile metadata is copied to the runtime unit structure and the low byte of `region_code` becomes the effective region id (when valid). If no record matches, the engine raises the “Unit %s was not found in the Unit Position Table.” warning.
 
-**Pattern 3: Invalid/Special markers**:
-- Values like `0x050c, 0xff00` (1292, 65280) with 0xFF high byte
-- Likely indicate undeployed units, reinforcement pools, or data errors
-- Should be filtered when visualizing unit placements
+**Practical decoding rules:**
+- If `position_slot < region_count`, treat it as a direct region index and display `tile_x` / `tile_y` straight from the 32-byte unit frame.
+- Otherwise, look up the slot in pointer section 14 and:
+  - Use `region_code & 0xFF` when it falls inside `[0, region_count)`.
+  - Use `tile_x_raw >> 8` and `tile_y_raw` as the best available hex coordinates (star the value in the UI to indicate it was derived).
+  - Surface `panel`/`flags` for debugging; non-zero panels indicate tactical submaps.
+- Entries where `region_code & 0xFF == 0xFF` act as sentinels (fallback/no data).
 
-#### Unit Placement by Region:
+#### Scenario Editor OOB Display
 
-Units with `region_index < 22` are deployed within that specific region. The tile coordinates position them on the tactical hex map for that region. Each region represents a geographic area (e.g., "Gulf of Aden", "Maldives") where tactical combat occurs.
-
-**Example placements (Maldives scenario)**:
-```
-Africa (Region 0):
-  - Air unit (Red): hex (8, 32)
-  - Air unit (Blue): tile (12, 42)
-  - Surface unit (Blue): hex (20, 28)
-
-North Arabian Sea (Region 11):
-  - Air unit (Blue): tile (53, 59)
-```
-
-#### Visualization:
-
-A visualization tool (`visualize_units.py`) can plot unit placements on MAPVER20.PCX by:
-1. Filtering units with valid region indices (< 22)
-2. Decoding tile coordinates based on pattern detection
-3. Mapping hex/tile coordinates to pixel positions
-4. Color-coding by side (Green/Red/Blue/Yellow)
-
-The coordinate system varies by scenario and may use different scales or encodings. Further disassembly analysis is needed to fully decode all coordinate patterns.
-
-#### Scenario Editor OOB Filtering:
-
-The scenario editor must filter units when displaying the OOB table to show only **starting units** in the scenario. Map files (e.g., `MALDIVE.DAT`) contain all units including reinforcements and off-map units, which should not appear in the editor's unit list.
-
-**Filtering Rule (from disassembly analysis):**
-
-Starting units are identified by a single criterion:
-- **`region_index == 0`** - Unit must be in region 0 EXACTLY (not any valid region < 22, but specifically region 0)
-
-This was discovered through analysis of disasm.txt at lines 43479-43496 and 45206-45246, where the game engine's unit loading code explicitly checks `cmp byte ptr es:[bx+22h], 0` and skips units where region != 0.
-
-**Example (Maldives scenario):**
-- Total units in MALDIVE.DAT: 84 units (31 air + 31 surface + 22 submarine)
-- Starting units (region == 0): 9 units (4 air + 2 surface + 3 submarine)
-- Units in other regions (1-21): Deployed during scenario but not at start
-- Off-map/reserve pool (region_index >= 22): Reinforcements
-
-**Implementation:**
-In `scenario_editor.py`, the `refresh_unit_table()` method (line 1213) implements this filter:
-```python
-for unit in unit_table.units:
-    # Starting units filter (from disassembly analysis):
-    # Only show units with region_index == 0 (exactly zero, not < 22)
-    # The game engine uses this exact match to select starting units
-    if unit.region_index != 0:
-        continue
-    # ... display unit in table ...
-```
-
-This ensures the editor displays only the units that are actually available at scenario start, matching the game's exact behavior.
+The editor now resolves `position_slot` values through this pointer section automatically. Slots that still live on the main board (values `< region_count`) retain their original region/coordinate fields, while reinforcement pools and scripted deployments show a derived region label plus a “*” suffixed coordinate that came from the Unit Position Table. The “Position:” line in the Unit Details box explains which entry was used (range, panel, flags) so you can verify the mapping against the disassembly references at `disasm.txt:295950-296196`.
 
 **Note on owner_raw Encoding:**
-The `owner_raw` byte structure requires further investigation. Current documentation suggests bits 0-1 encode side (0=Green, 1=Red, 2=Blue, 3=Yellow), but the actual encoding may be more complex. For Maldives submarines:
-- 1 unit with owner_raw=0x00
-- 2 units with owner_raw=0x04
-This matches the expected count of 3 starting submarines (1 Green + 2 Red per scenarios.md), suggesting bit 2 (0x04) may distinguish between opposing sides.
+Bits 0-1 still identify player side (0=Green, 1=Red, 2=Blue, 3=Yellow). Higher bits flag mission state (e.g., bombing assignment) as seen elsewhere in the disassembly (`disasm.txt:188498+`). The earlier assumption that bit 2 singled out opposing forces was simply observing one scenario’s data.
 
 ### Data Table: Global Tables
 
@@ -938,6 +883,10 @@ This matches the expected count of 3 starting submarines (1 Green + 2 Red per sc
   - Air (`TRMAIR.DAT`): byte @ offset `0x21` (33) → icon id.
   - Surface (`TRMSRF.DAT`): word @ offset `0x72` (114) → icon id (low byte).
   - Submarine (`TRMSUB.DAT`): **Icon index calculated as `41 + template_id`** (no stored field). The 18 submarine templates use icons 41-58 sequentially. Byte 26 previously documented was actually part of the weapon name text field.
+- **Victory points per template:** the data that feeds the in-game “Victory Pt:” readouts lives inside the same records.
+  - Air templates store VP as the **last non-zero byte** of each record (single-byte value; e.g., `AV-8B` → `0x0a` = 10 VP, `B-52G` → `0x47` = 71 VP).
+  - Surface and submarine templates store VP as a **little-endian word at offset `0x72`** (e.g., `Adams` → `0x001e` = 30 VP, `Los Angeles` → `0x0012` = 18 VP).
+  - These offsets match the structures accessed by the `Victory Pt:` UI routines in `sub_B1357`/`sub_B2048`, confirming they are the tables referenced by the `SCORE` opcode.
 - `REFER.DAT`: Lookup tables for terrain keywords (`SHAL`, `DEEP`), country abbreviations (`KKIN`, `KKUS`, etc.), weapon names (`Harpoon`, `SS-N-19`) and other shared strings.
 - Graphics/UI assets:
   - Strategic maps: `MAPVER20.PCX` (2861×2126 full board) and `SMALLMP.PCX` (89×66 strategic thumbnail) in `game/`.
