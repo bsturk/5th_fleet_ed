@@ -343,10 +343,6 @@ class ScenarioEditorApp:
         self.notes_text = tk.Text(editor, height=6, width=60)
         self.notes_text.grid(row=3, column=1, sticky="nsew", pady=2)
 
-        ttk.Label(editor, text="Trailing Bytes (hex)").grid(row=4, column=0, sticky="nw")
-        self.trailing_text = tk.Text(editor, height=3, width=60)
-        self.trailing_text.grid(row=4, column=1, sticky="ew", pady=2)
-
         info_frame = ttk.Frame(editor)
         info_frame.grid(row=5, column=1, sticky="ew")
         info_frame.columnconfigure(1, weight=1)
@@ -827,8 +823,6 @@ class ScenarioEditorApp:
         self.objectives_text.insert(tk.END, record.objectives)
         self.notes_text.delete("1.0", tk.END)
         self.notes_text.insert(tk.END, record.notes)
-        self.trailing_text.delete("1.0", tk.END)
-        self.trailing_text.insert(tk.END, record.trailing_bytes.hex())
         self.scenario_key_var.set(record.scenario_key or "<unknown>")
         self.scenario_difficulty_var.set(record.difficulty_token or "<unknown>")
         self._ensure_map_for_scenario(record)
@@ -927,16 +921,6 @@ class ScenarioEditorApp:
             record.metadata_entries[0].text = title
         else:
             record.metadata_entries = [MetadataEntry(text=title)]
-
-        trailing_hex = self.trailing_text.get("1.0", tk.END).strip().replace(" ", "")
-        if len(trailing_hex) % 2 != 0:
-            messagebox.showerror("Invalid Hex", "Trailing bytes must contain an even number of hex characters.")
-            return
-        try:
-            record.trailing_bytes = bytes.fromhex(trailing_hex)
-        except ValueError:
-            messagebox.showerror("Invalid Hex", "Trailing bytes contain invalid hexadecimal characters.")
-            return
 
         self.refresh_scenario_list()
         self.refresh_win_table()
@@ -2880,8 +2864,6 @@ class ScenarioEditorApp:
         record.trailing_bytes = self._encode_objective_script(record.trailing_bytes, script)
 
         self.refresh_win_table()
-        self.trailing_text.delete("1.0", tk.END)
-        self.trailing_text.insert(tk.END, record.trailing_bytes.hex())
 
     def add_win_word(self) -> None:
         record = self._current_record()
@@ -2896,8 +2878,6 @@ class ScenarioEditorApp:
         record.trailing_bytes = self._encode_objective_script(record.trailing_bytes, script)
 
         self.refresh_win_table()
-        self.trailing_text.delete("1.0", tk.END)
-        self.trailing_text.insert(tk.END, record.trailing_bytes.hex())
 
     def remove_win_word(self) -> None:
         record = self._current_record()
@@ -2929,8 +2909,6 @@ class ScenarioEditorApp:
                 record.trailing_bytes = record.trailing_bytes[:script_offset]
 
         self.refresh_win_table()
-        self.trailing_text.delete("1.0", tk.END)
-        self.trailing_text.insert(tk.END, record.trailing_bytes.hex())
 
     def _populate_icon_list(self) -> None:
         if not hasattr(self, "icon_listbox"):
