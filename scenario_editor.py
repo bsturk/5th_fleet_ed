@@ -548,7 +548,8 @@ class ScenarioEditorApp:
             row=0, column=1, sticky="w", padx=(8, 0)
         )
 
-        ttk.Label(editor, text="Side (0-3)").grid(row=1, column=0, sticky="w", padx=2, pady=2)
+        # 5th Fleet is a 2-player game: 0,1=Green player; 2,3=Red player
+        ttk.Label(editor, text="Side (0=Green-A, 1=Green-B, 2=Red-A, 3=Red-B)").grid(row=1, column=0, sticky="w", padx=2, pady=2)
         self.unit_side_var = tk.IntVar()
         ttk.Spinbox(editor, textvariable=self.unit_side_var, from_=0, to=3, width=5).grid(
             row=1, column=1, sticky="w", padx=2, pady=2
@@ -761,7 +762,9 @@ class ScenarioEditorApp:
         side_frame = ttk.Frame(preview_frame)
         side_frame.grid(row=1, column=0, sticky="w", pady=(6, 4))
         ttk.Label(side_frame, text="Side preview:").pack(side=tk.LEFT)
-        for side_value, side_label in enumerate(["Green", "Red", "Blue", "Yellow"]):
+        # 5th Fleet is a 2-player game: Green player (sides 0-1) vs Red player (sides 2-3)
+        # The 4 side values represent: 0=Green-A, 1=Green-B, 2=Red-A, 3=Red-B
+        for side_value, side_label in enumerate(["Green-A", "Green-B", "Red-A", "Red-B"]):
             ttk.Radiobutton(
                 side_frame,
                 text=side_label,
