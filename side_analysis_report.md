@@ -94,32 +94,34 @@ The 4 "sides" might represent:
 
 ---
 
-## Recommendations
+## Implementation Status
 
-### Option 1: Fix the UI to Show Only 2 Players
+✅ **IMPLEMENTED**: Option 2 - Updated UI labels to clarify two-player nature
 
-Change the editor to:
-1. Show player as **0=Green or 1=Red** (bit 1 only)
-2. Show formation/color as a separate field (bit 0)
-3. Update labels to reflect "Player" and "Formation"
+### Changes Made:
 
-### Option 2: Keep Current UI But Update Labels
+1. **scenario_editor.py**:
+   - Icon preview radio buttons: Changed from `["Green", "Red", "Blue", "Yellow"]` to `["Green-A", "Green-B", "Red-A", "Red-B"]`
+   - Unit editor label: Updated to show `"Side (0=Green-A, 1=Green-B, 2=Red-A, 3=Red-B)"`
+   - Added explanatory comments in code
 
-Change labels from:
-- `["Green", "Red", "Blue", "Yellow"]`
+2. **txt/5TH_FLEET.MD**:
+   - Updated Unit Record Structure table to show new side labels
+   - Rewrote "Note on owner_raw Encoding" section to explain:
+     - 5th Fleet is a two-player game
+     - Bit 1 likely determines player (0=Green, 1=Red)
+     - Bit 0 may indicate formation/sub-group
+     - All 4 side values are actively used in data
 
-To:
-- `["Green-A", "Green-B", "Red-A", "Red-B"]`
+3. **check_sides.py**:
+   - Updated output to use new side labels
+   - Improved conclusion text to reflect two-player game with 4 side values
 
-Or:
-- `["US Primary", "US Allied", "Soviet Primary", "Soviet Allied"]`
+### Future Investigations (Optional):
 
-### Option 3: Investigate Further
-
-Need to:
 1. Check disassembly for how the game actually interprets bits 0-1
-2. Test in-game to see if units with sides 2/3 behave differently
-3. Check if there's documentation about "formation colors" or "unit grouping"
+2. Test in-game to see if units with sides 1 vs 0 (or 3 vs 2) behave differently
+3. Determine exact meaning of "A/B" sub-groups (primary/allied? formations? AI control?)
 
 ---
 

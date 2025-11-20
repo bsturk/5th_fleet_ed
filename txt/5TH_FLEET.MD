@@ -840,7 +840,7 @@ Pointer entries 5, 8, and 11 hold the air, surface, and submarine OOB respective
 
 | Offset | Word | Content | Description |
 |--------|------|---------|-------------|
-| 0-1 | 0 | `(owner_raw << 8) \| template_id` | **Word 0**: Low byte = template index into TRMAIR/TRMSRF/TRMSUB.DAT, High byte = owner flags (bits 0-1 = side: 0=Green, 1=Red, 2=Blue, 3=Yellow) |
+| 0-1 | 0 | `(owner_raw << 8) \| template_id` | **Word 0**: Low byte = template index into TRMAIR/TRMSRF/TRMSUB.DAT, High byte = owner flags (bits 0-1 = side: 0=Green-A, 1=Green-B, 2=Red-A, 3=Red-B; see note below) |
 | 2-3 | 1 | `position_slot` | **Word 1**: When `< region_count`, it is the on-map region id. Otherwise it encodes a slot ID that must be resolved through pointer section 14 (see below). |
 | 4-5 | 2 | `tile_x` | **Word 2**: Tile X coordinate (encoding varies - see below) |
 | 6-7 | 3 | `tile_y` | **Word 3**: Tile Y coordinate (encoding varies - see below) |
@@ -875,7 +875,15 @@ During loading the game performs a binary search across this table (`sub_50465` 
 The editor now resolves `position_slot` values through this pointer section automatically. Slots that still live on the main board (values `< region_count`) retain their original region/coordinate fields, while reinforcement pools and scripted deployments show a derived region label plus a “*” suffixed coordinate that came from the Unit Position Table. The “Position:” line in the Unit Details box explains which entry was used (range, panel, flags) so you can verify the mapping against the disassembly references at `disasm.txt:295950-296196`.
 
 **Note on owner_raw Encoding:**
-Bits 0-1 still identify player side (0=Green, 1=Red, 2=Blue, 3=Yellow). Higher bits flag mission state (e.g., bombing assignment) as seen elsewhere in the disassembly (`disasm.txt:188498+`). The earlier assumption that bit 2 singled out opposing forces was simply observing one scenario’s data.
+
+**5th Fleet is a two-player wargame** (Green player vs. Red player), but uses 4 "side" values in the data format:
+- **Bits 0-1**: Side encoding (0=Green-A, 1=Green-B, 2=Red-A, 3=Red-B)
+  - Sides 0-1: Green player (US/Allied forces)
+  - Sides 2-3: Red player (Soviet/Russian/Indian forces)
+  - Analysis suggests **bit 1 determines player ownership** (0=Green, 1=Red), while **bit 0 may indicate formation/sub-group**
+- **Higher bits**: Mission state flags (e.g., bombing assignment) as seen in `disasm.txt:188498+`
+
+All 4 side values are actively used in scenario data. The "A/B" designation likely represents primary/allied forces or different formation groups within each player's forces.
 
 ### Data Table: Global Tables
 
@@ -904,7 +912,7 @@ Bits 0-1 still identify player side (0=Green, 1=Red, 2=Blue, 3=Yellow). Higher b
       - 1-pixel alignment offset: skip the first pixel after the 8-byte header
       - Pixels stored in raster order (left-to-right, top-to-bottom)
       - 26×26 = 676 pixels, requiring 338 bytes (plus offset = 339 bytes)
-    - The background color index is replaced by the engine with side-specific colors (0=green, 1=red, 2=blue, 3=yellow) to indicate unit ownership
+    - The background color index is replaced by the engine with side-specific colors (0=green, 1=green, 2=red, 3=red for player ownership; actual display colors may vary) to indicate unit ownership
     - Index 0 is treated as transparent
     - The scenario editor renders these with EGA palette + side tinting for preview
   - Unit reference cards: Individual 248×165 PCXs in `TRM.GXL` (e.g., `ENTPRISE.PCX`, `AKULA   .PCX`) are tactical reference sheets showing detailed stats and larger artwork for each unit type.
@@ -993,7 +1001,7 @@ Sample structure returned by the `--json` flag; field names map directly to scen
         "preview": {
           "unit_count": 30,
           "top_templates": [["AV-8B", 12], ["E-2C", 3], ...],
-          "side_counts": [[0, 16], [1, 4], [2, 6], [3, 4]],
+          "side_counts": [[0, 16], [1, 4], [2, 6], [3, 4]],  # 0-1=Green player, 2-3=Red player
           "top_regions": [["Male Atoll", 6], ["Gulf of Aden", 3], ...]
         }
       },
@@ -1006,7 +1014,7 @@ Sample structure returned by the `--json` flag; field names map directly to scen
           "template_id": 63,
           "template_name": "T95H",
           "owner_raw": 194,
-          "side": 2,
+          "side": 2,  # 2=Red-A (Red player)
           "region_index": 6,
           "region_name": "Gulf of Aden",
           "tile_x": 34,

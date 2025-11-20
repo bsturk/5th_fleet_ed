@@ -77,16 +77,19 @@ print("=" * 70)
 print("TOTALS:")
 print("=" * 70)
 for side in sorted(total_sides.keys()):
-    side_names = {0: "Green", 1: "Red", 2: "Blue", 3: "Yellow"}
-    print(f"  Side {side} ({side_names.get(side, 'Unknown'):6s}): {total_sides[side]:4d} units")
+    side_names = {0: "Green-A", 1: "Green-B", 2: "Red-A", 3: "Red-B"}
+    print(f"  Side {side} ({side_names.get(side, 'Unknown'):8s}): {total_sides[side]:4d} units")
 print()
 print(f"Total units: {sum(total_sides.values())}")
 print()
 
 if total_sides[2] == 0 and total_sides[3] == 0:
-    print("✓ CONCLUSION: Only sides 0 (Green) and 1 (Red) are actually used!")
-    print("  The data format supports 4 sides, but the game only uses 2.")
+    print("✓ CONCLUSION: Only sides 0 (Green-A) and 1 (Green-B) are actually used!")
+    print("  The data format supports 4 sides, but the game only uses 2 Green player sides.")
 elif total_sides[2] > 0 or total_sides[3] > 0:
-    print("⚠ CONCLUSION: Sides 2 (Blue) and/or 3 (Yellow) ARE used in the data!")
-    print(f"  Blue (2): {total_sides[2]} units")
-    print(f"  Yellow (3): {total_sides[3]} units")
+    print("✓ CONCLUSION: All 4 side values ARE used in the data!")
+    print(f"  This is a 2-player game: Green player (sides 0-1) vs Red player (sides 2-3)")
+    print(f"  Green-A (0): {total_sides.get(0, 0)} units")
+    print(f"  Green-B (1): {total_sides.get(1, 0)} units")
+    print(f"  Red-A (2): {total_sides[2]} units")
+    print(f"  Red-B (3): {total_sides[3]} units")
